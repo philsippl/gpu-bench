@@ -86,7 +86,7 @@ fn custom_kernel(c: &mut Criterion) {
     group.bench_function("matmul u16", |b| {
         b.iter(|| {
             unsafe {
-                f.launch(
+                f.clone().launch(
                     cfg,
                     (
                         &a_dev,

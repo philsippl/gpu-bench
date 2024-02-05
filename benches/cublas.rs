@@ -86,7 +86,7 @@ fn cublas(c: &mut Criterion) {
 
             // Launch the cast kernel
             unsafe {
-                f.launch_on_stream(
+                f.clone().launch_on_stream(
                     &stream,
                     cfg,
                     (&c_dev, &mut final_dev, (DB_SIZE * QUERY_SIZE) as i32),
