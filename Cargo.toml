@@ -27,3 +27,7 @@ debug = true
 [[bench]]
 name = "custom_kernel"
 harness = false
+
+[[bench]]
+name = "cublas"
+harness = false
