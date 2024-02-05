@@ -61,7 +61,7 @@ fn cublas(c: &mut Criterion) {
         shared_mem_bytes: 0,
     };
 
-    group.bench_function("matmul u16", |b| {
+    group.bench_function("cublas + cast", |b| {
         b.iter(|| {
             unsafe {
                 blas.gemm(
