@@ -31,15 +31,15 @@ fn cublas(c: &mut Criterion) {
     let mut group = c.benchmark_group("cublas");
 
     let dev = CudaDevice::new(0).unwrap();
-    let stream = dev.fork_default_stream()?;
+    let stream = dev.fork_default_stream().unwrap();
     let ptx = compile_ptx(PTX_SRC).unwrap();
     dev.load_ptx(ptx, "carsten", &["carsten"]).unwrap();
     let f = dev.get_func("carsten", "carsten").unwrap();
 
-    let a_host = create_random_matrix(db_size, width);
-    let b_host = create_random_matrix(query_size, width);
-    let mut c_host = vec![0f64; db_size * query_size];
-    let mut final_host = vec![0u16; db_size * query_size];
+    let a_host = create_random_matrix(DB_SIZE, WIDTH);
+    let b_host = create_random_matrix(QUERY_SIZE, WIDTH);
+    let mut c_host = vec![0f64; DB_SIZE * QUERY_SIZE];
+    let mut final_host = vec![0u16; DB_SIZE * QUERY_SIZE];
 
     let a_dev = dev.htod_sync_copy(&a_host).unwrap();
     let b_dev = dev.htod_sync_copy(&b_host).unwrap();
@@ -93,7 +93,7 @@ fn cublas(c: &mut Criterion) {
             }
             .unwrap();
 
-            dev.wait_for(&stream)?;
+            dev.wait_for(&stream).unwrap();
 
             dev.dtoh_sync_copy_into(&final_dev, &mut final_host)
                 .unwrap();

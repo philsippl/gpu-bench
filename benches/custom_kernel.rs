@@ -64,9 +64,9 @@ fn custom_kernel(c: &mut Criterion) {
     dev.load_ptx(ptx, "matmul", &["matmul"]).unwrap();
     let f = dev.get_func("matmul", "matmul").unwrap();
 
-    let a_host = create_random_matrix(db_size, width);
-    let b_host = create_random_matrix(query_size, width);
-    let mut c_host = vec![0u16; db_size * query_size];
+    let a_host = create_random_matrix(DB_SIZE, WIDTH);
+    let b_host = create_random_matrix(QUERY_SIZE, WIDTH);
+    let mut c_host = vec![0f64; DB_SIZE * QUERY_SIZE];
 
     let a_dev = dev.htod_sync_copy(&a_host).unwrap();
     let b_dev = dev.htod_sync_copy(&b_host).unwrap();
