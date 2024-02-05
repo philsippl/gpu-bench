@@ -1,5 +1,6 @@
 use std::os::raw::c_void;
 
+use criterion::{criterion_group, criterion_main, Criterion};
 use cudarc::driver::sys::{cuMemAllocHost_v2, cuMemcpyDtoH_v2};
 use cudarc::driver::{CudaDevice, DevicePtr, DriverError, LaunchAsync, LaunchConfig};
 use cudarc::nvrtc::compile_ptx;
@@ -75,8 +76,8 @@ fn custom_kernel(c: &mut Criterion) {
     let cfg = LaunchConfig {
         block_dim: (TILE_WIDTH, TILE_WIDTH, 1),
         grid_dim: (
-            (query_size as u32 + TILE_WIDTH - 1) / TILE_WIDTH,
-            (db_size as u32 + TILE_WIDTH - 1) / TILE_WIDTH,
+            (QUERY_SIZE as u32 + TILE_WIDTH - 1) / TILE_WIDTH,
+            (DB_SIZE as u32 + TILE_WIDTH - 1) / TILE_WIDTH,
             1,
         ),
         shared_mem_bytes: 0,

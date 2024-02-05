@@ -1,3 +1,4 @@
+use criterion::{criterion_group, criterion_main, Criterion};
 use cudarc::cublas::result::dgemm;
 use cudarc::cublas::{sys, CudaBlas, Gemm, GemmConfig};
 use cudarc::driver::sys::{cuMemAllocHost_v2, cuMemcpyDtoH_v2};
@@ -116,3 +117,6 @@ fn cublas(c: &mut Criterion) {
     //     let _ = cuMemcpyDtoH_v2(c_host_ptr, *c_dev.device_ptr(), bytesize);
     // }
 }
+
+criterion_group!(benches, cublas,);
+criterion_main!(benches);
