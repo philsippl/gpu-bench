@@ -51,7 +51,7 @@ fn cublas(c: &mut Criterion) {
         blas.set_stream(Some(&stream));
     }
 
-    let num_elements = db_size * query_size;
+    let num_elements = DB_SIZE * QUERY_SIZE;
     let threads_per_block = 256;
     let blocks_per_grid = (num_elements + threads_per_block - 1) / threads_per_block;
     let cfg = LaunchConfig {
@@ -67,14 +67,14 @@ fn cublas(c: &mut Criterion) {
                     GemmConfig {
                         transa: sys::cublasOperation_t::CUBLAS_OP_N,
                         transb: sys::cublasOperation_t::CUBLAS_OP_N,
-                        m: db_size as i32,
-                        n: query_size as i32,
-                        k: width as i32,
+                        m: DB_SIZE as i32,
+                        n: QUERY_SIZE as i32,
+                        k: WIDTH as i32,
                         alpha: 1.0,
-                        lda: db_size as i32,
-                        ldb: width as i32,
+                        lda: DB_SIZE as i32,
+                        ldb: WIDTH as i32,
                         beta: 0.0,
-                        ldc: db_size as i32,
+                        ldc: DB_SIZE as i32,
                     },
                     &a_dev,
                     &b_dev,
@@ -88,7 +88,7 @@ fn cublas(c: &mut Criterion) {
                 f.launch_on_stream(
                     &stream,
                     cfg,
-                    (&c_dev, &mut final_dev, (db_size * query_size) as i32),
+                    (&c_dev, &mut final_dev, (DB_SIZE * QUERY_SIZE) as i32),
                 )
             }
             .unwrap();

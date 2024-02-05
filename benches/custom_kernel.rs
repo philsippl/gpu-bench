@@ -91,9 +91,9 @@ fn custom_kernel(c: &mut Criterion) {
                         &a_dev,
                         &b_dev,
                         &mut c_dev,
-                        db_size as i32,
-                        query_size as i32,
-                        width as i32,
+                        DB_SIZE as i32,
+                        QUERY_SIZE as i32,
+                        WIDTH as i32,
                     ),
                 )
             }
