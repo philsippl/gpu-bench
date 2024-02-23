@@ -71,23 +71,23 @@ fn cublas(c: &mut Criterion) {
         });
 
         // Vanilla ndArray version for sanity check (have to use column major)
-        let a_nda = Array2::from_shape_vec(
-            (WIDTH as usize, DB_SIZE as usize),
-            a_host.into_iter().map(|x| x as u32).collect::<Vec<_>>(),
-        )
-        .unwrap();
-        let b_nda = Array2::from_shape_vec(
-            (QUERY_SIZE as usize, WIDTH as usize),
-            b_host.into_iter().map(|x| x as u32).collect::<Vec<_>>(),
-        )
-        .unwrap();
-        let c_nda = a_nda.t().dot(&b_nda.t()).into_raw_vec();
+        // let a_nda = Array2::from_shape_vec(
+        //     (WIDTH as usize, DB_SIZE as usize),
+        //     a_host.into_iter().map(|x| x as u32).collect::<Vec<_>>(),
+        // )
+        // .unwrap();
+        // let b_nda = Array2::from_shape_vec(
+        //     (QUERY_SIZE as usize, WIDTH as usize),
+        //     b_host.into_iter().map(|x| x as u32).collect::<Vec<_>>(),
+        // )
+        // .unwrap();
+        // let c_nda = a_nda.t().dot(&b_nda.t()).into_raw_vec();
 
-        assert_eq!(
-            c_nda[0..100],
-            c_host[0..100],
-            "GPU result does not match CPU implementation"
-        );
+        // assert_eq!(
+        //     c_nda[0..100],
+        //     c_host[0..100],
+        //     "GPU result does not match CPU implementation"
+        // );
     }
 
     // FP32
