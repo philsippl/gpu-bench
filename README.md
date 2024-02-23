@@ -10,7 +10,7 @@ cublas/cublas int8 100000 x 31
                         change: [+0.0583% +0.1756% +0.3340%] (p = 0.00 < 0.05)
                         Change within noise threshold.
 Found 16 outliers among 100 measurements (16.00%)
-  1 (1.00%) high mild
+  1 (1.00%) high mild   
   15 (15.00%) high severe
 cublas/cublas fp32 100000 x 31
                         time:   [6.4945 ms 6.4948 ms 6.4951 ms]
@@ -52,4 +52,41 @@ custom_kernel/custom kernel triton batchsize 10
                         change: [-0.4540% -0.0614% +0.3095%] (p = 0.76 > 0.05)
                         No change in performance detected.
 
+```
+
+## A100 (try #1)
+
+```
+    Running benches/cublas.rs (target/release/deps/cublas-2572128c9942af20)
+cublas/cublas int8 100000 x 31
+                        time:   [6.6696 ms 6.7082 ms 6.7477 ms]
+                        change: [+19.236% +19.936% +20.605%] (p = 0.00 < 0.05)
+                        Performance has regressed.
+Found 1 outliers among 100 measurements (1.00%)
+  1 (1.00%) low mild
+cublas/cublas fp32 100000 x 31
+                        time:   [6.6640 ms 6.7126 ms 6.7582 ms]
+Found 3 outliers among 100 measurements (3.00%)
+  3 (3.00%) low mild
+cublas/cublas fp64 100000 x 31
+                        time:   [9.9811 ms 10.054 ms 10.122 ms]
+Found 4 outliers among 100 measurements (4.00%)
+  3 (3.00%) low mild
+  1 (1.00%) high mild
+
+     Running benches/custom_kernel.rs (target/release/deps/custom_kernel-b04de854a367aab0)
+custom_kernel/custom kernel naïve 100000 x 32
+                        time:   [19.525 ms 19.579 ms 19.619 ms]
+Found 4 outliers among 100 measurements (4.00%)
+  2 (2.00%) low severe
+  1 (1.00%) high mild
+  1 (1.00%) high severe
+
+     Running benches/custom_kernel_2d.rs (target/release/deps/custom_kernel_2d-d3d72b84852609a3)
+custom_kernel/custom kernel 2d 100000 x 32
+                        time:   [14.816 ms 14.889 ms 14.952 ms]
+Found 7 outliers among 100 measurements (7.00%)
+  4 (4.00%) low severe
+  1 (1.00%) low mild
+  2 (2.00%) high mild
 ```
