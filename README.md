@@ -90,3 +90,13 @@ Found 7 outliers among 100 measurements (7.00%)
   1 (1.00%) low mild
   2 (2.00%) high mild
 ```
+
+## A100 (try #2 better int8)
+`imma` instructions only used under specific [conditions](https://docs.nvidia.com/cuda/cublas/index.html#cublasltmatmul-regular-imma-conditions). `A` needs to be transposed.
+
+```
+cublas/cublas int8 100000 x 32
+  time:   [2.5065 ms 2.5088 ms 2.5122 ms]
+  change: [-64.085% -63.626% -63.173%] (p = 0.00 < 0.05)
+  Performance has improved.
+```
