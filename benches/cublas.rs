@@ -1,121 +1,180 @@
+/// cuBLAS implemention for int8, fp32, fp64
+use std::ffi::c_void;
+
 use criterion::{criterion_group, criterion_main, Criterion};
-use cudarc::cublas::result::dgemm;
+
+use cudarc::cublas::result::gemm_ex;
 use cudarc::cublas::{sys, CudaBlas, Gemm, GemmConfig};
-use cudarc::driver::sys::{cuMemAllocHost_v2, cuMemcpyDtoH_v2};
-use cudarc::driver::{CudaDevice, DevicePtr, DriverError, LaunchAsync, LaunchConfig};
-use cudarc::nvrtc::compile_ptx;
+
+use cudarc::driver::{CudaDevice, DevicePtr, DevicePtrMut};
+use ndarray::Array2;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 
-const TILE_WIDTH: u32 = 32;
-const WIDTH: usize = 12800;
-const DB_SIZE: usize = 100000;
+const WIDTH: usize = 12_800;
 const QUERY_SIZE: usize = 31;
+const DB_SIZE: usize = 100_000;
 const RNG_SEED: u64 = 42;
-
-const PTX_SRC: &str = "
-extern \"C\" __global__ void carsten(double* input, unsigned short* output, size_t numElements) {
-    size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if (idx < numElements) {
-        output[idx] = input[idx];
-    }
-}
-";
-
-fn create_random_matrix(n: usize, m: usize) -> Vec<f64> {
-    let mut rng = StdRng::seed_from_u64(RNG_SEED);
-    let total_size = n * m;
-    (0..total_size).map(|_| rng.gen::<u16>() as f64).collect()
-}
 
 fn cublas(c: &mut Criterion) {
     let mut group = c.benchmark_group("cublas");
 
+    let mut rng = StdRng::seed_from_u64(RNG_SEED);
     let dev = CudaDevice::new(0).unwrap();
-    let stream = dev.fork_default_stream().unwrap();
-    let ptx = compile_ptx(PTX_SRC).unwrap();
-    dev.load_ptx(ptx, "carsten", &["carsten"]).unwrap();
-    let f = dev.get_func("carsten", "carsten").unwrap();
-
-    let a_host = create_random_matrix(DB_SIZE, WIDTH);
-    let b_host = create_random_matrix(QUERY_SIZE, WIDTH);
-    let mut c_host = vec![0f64; DB_SIZE * QUERY_SIZE];
-    let mut final_host = vec![0u16; DB_SIZE * QUERY_SIZE];
-
-    let a_dev = dev.htod_sync_copy(&a_host).unwrap();
-    let b_dev = dev.htod_sync_copy(&b_host).unwrap();
-    let mut c_dev = dev.htod_sync_copy(&c_host).unwrap();
-    let mut final_dev = dev.htod_sync_copy(&final_host).unwrap();
-
     let blas = CudaBlas::new(dev.clone()).unwrap();
-    unsafe {
-        blas.set_stream(Some(&stream));
+
+    // INT8
+    // We can use int8 to calculate mask weights.
+    // TODO: eval int4
+    {
+        let a_host = (0..DB_SIZE * WIDTH)
+            .map(|_| rng.gen_range(0..2) as u8)
+            .collect::<Vec<_>>();
+        let b_host = (0..QUERY_SIZE * WIDTH)
+            .map(|_| rng.gen_range(0..2) as u8)
+            .collect::<Vec<_>>();
+        let mut c_host = vec![0u32; DB_SIZE * QUERY_SIZE];
+
+        let a_dev = dev.htod_sync_copy(&a_host).unwrap();
+        let b_dev = dev.htod_sync_copy(&b_host).unwrap();
+        let mut c_dev = dev.htod_sync_copy(&c_host).unwrap();
+
+        group.bench_function(format!("cublas int8 {} x {}", DB_SIZE, QUERY_SIZE), |b| {
+            b.iter(|| {
+                unsafe {
+                    // See the supported types here: https://docs.nvidia.com/cuda/cublas/index.html#cublasgemmex
+                    gemm_ex(
+                        blas.handle().clone(),
+                        sys::cublasOperation_t::CUBLAS_OP_N,
+                        sys::cublasOperation_t::CUBLAS_OP_N,
+                        DB_SIZE as i32,
+                        QUERY_SIZE as i32,
+                        WIDTH as i32,
+                        &1 as *const i32 as *const c_void,
+                        *a_dev.device_ptr() as *const _,
+                        sys::cublasDataType_t::CUDA_R_8I,
+                        DB_SIZE as i32,
+                        *b_dev.device_ptr() as *const _,
+                        sys::cublasDataType_t::CUDA_R_8I,
+                        WIDTH as i32,
+                        &0 as *const i32 as *const c_void,
+                        *c_dev.device_ptr_mut() as *mut _,
+                        sys::cublasDataType_t::CUDA_R_32I,
+                        DB_SIZE as i32,
+                        sys::cublasComputeType_t::CUBLAS_COMPUTE_32I,
+                        sys::cublasGemmAlgo_t::CUBLAS_GEMM_DEFAULT,
+                    )
+                    .unwrap();
+                }
+                dev.dtoh_sync_copy_into(&c_dev, &mut c_host).unwrap();
+            });
+        });
+
+        // Vanilla ndArray version for sanity check (have to use column major)
+        let a_nda = Array2::from_shape_vec(
+            (WIDTH as usize, DB_SIZE as usize),
+            a_host.into_iter().map(|x| x as u32).collect::<Vec<_>>(),
+        )
+        .unwrap();
+        let b_nda = Array2::from_shape_vec(
+            (QUERY_SIZE as usize, WIDTH as usize),
+            b_host.into_iter().map(|x| x as u32).collect::<Vec<_>>(),
+        )
+        .unwrap();
+        let c_nda = a_nda.t().dot(&b_nda.t()).into_raw_vec();
+
+        assert_eq!(
+            c_nda[0..100],
+            c_host[0..100],
+            "GPU result does not match CPU implementation"
+        );
     }
 
-    let num_elements = DB_SIZE * QUERY_SIZE;
-    let threads_per_block = 256;
-    let blocks_per_grid = (num_elements + threads_per_block - 1) / threads_per_block;
-    let cfg = LaunchConfig {
-        block_dim: (threads_per_block as u32, 1, 1),
-        grid_dim: (blocks_per_grid as u32, 1, 1),
-        shared_mem_bytes: 0,
-    };
+    // FP32
+    // This will overflow during accumulation: 16 bit * 12800 =~ 30 bit
+    {
+        let a_host = (0..DB_SIZE * WIDTH)
+            .map(|_| rng.gen::<u16>() as f32)
+            .collect::<Vec<_>>();
+        let b_host = (0..QUERY_SIZE * WIDTH)
+            .map(|_| rng.gen_range(0..2) as f32)
+            .collect::<Vec<_>>();
+        let mut c_host = vec![0f32; DB_SIZE * QUERY_SIZE];
 
-    group.bench_function("cublas + cast", |b| {
-        b.iter(|| {
-            unsafe {
-                blas.gemm(
-                    GemmConfig {
-                        transa: sys::cublasOperation_t::CUBLAS_OP_N,
-                        transb: sys::cublasOperation_t::CUBLAS_OP_N,
-                        m: DB_SIZE as i32,
-                        n: QUERY_SIZE as i32,
-                        k: WIDTH as i32,
-                        alpha: 1.0,
-                        lda: DB_SIZE as i32,
-                        ldb: WIDTH as i32,
-                        beta: 0.0,
-                        ldc: DB_SIZE as i32,
-                    },
-                    &a_dev,
-                    &b_dev,
-                    &mut c_dev,
-                )
-            }
-            .unwrap();
+        let a_dev = dev.htod_sync_copy(&a_host).unwrap();
+        let b_dev = dev.htod_sync_copy(&b_host).unwrap();
+        let mut c_dev = dev.htod_sync_copy(&c_host).unwrap();
 
-            // Launch the cast kernel
-            unsafe {
-                f.clone().launch_on_stream(
-                    &stream,
-                    cfg,
-                    (&c_dev, &mut final_dev, (DB_SIZE * QUERY_SIZE) as i32),
-                )
-            }
-            .unwrap();
-
-            dev.wait_for(&stream).unwrap();
-
-            dev.dtoh_sync_copy_into(&final_dev, &mut final_host)
-                .unwrap();
+        group.bench_function(format!("cublas fp32 {} x {}", DB_SIZE, QUERY_SIZE), |b| {
+            b.iter(|| {
+                unsafe {
+                    blas.gemm(
+                        GemmConfig {
+                            transa: sys::cublasOperation_t::CUBLAS_OP_N,
+                            transb: sys::cublasOperation_t::CUBLAS_OP_N,
+                            m: DB_SIZE as i32,
+                            n: QUERY_SIZE as i32,
+                            k: WIDTH as i32,
+                            alpha: 1.0,
+                            lda: DB_SIZE as i32,
+                            ldb: WIDTH as i32,
+                            beta: 0.0,
+                            ldc: DB_SIZE as i32,
+                        },
+                        &a_dev,
+                        &b_dev,
+                        &mut c_dev,
+                    )
+                    .unwrap();
+                }
+                dev.dtoh_sync_copy_into(&c_dev, &mut c_host).unwrap();
+            });
         });
-    });
+
+        // Skip sanity check bc of overflows
+    }
+
+    // FP64
+    {
+        let a_host = (0..DB_SIZE * WIDTH)
+            .map(|_| rng.gen::<u16>() as f64)
+            .collect::<Vec<_>>();
+        let b_host = (0..QUERY_SIZE * WIDTH)
+            .map(|_| rng.gen_range(0..2) as f64)
+            .collect::<Vec<_>>();
+        let mut c_host = vec![0f64; DB_SIZE * QUERY_SIZE];
+
+        let a_dev = dev.htod_sync_copy(&a_host).unwrap();
+        let b_dev = dev.htod_sync_copy(&b_host).unwrap();
+        let mut c_dev = dev.htod_sync_copy(&c_host).unwrap();
+        group.bench_function(format!("cublas fp64 {} x {}", DB_SIZE, QUERY_SIZE), |b| {
+            b.iter(|| {
+                unsafe {
+                    blas.gemm(
+                        GemmConfig {
+                            transa: sys::cublasOperation_t::CUBLAS_OP_N,
+                            transb: sys::cublasOperation_t::CUBLAS_OP_N,
+                            m: DB_SIZE as i32,
+                            n: QUERY_SIZE as i32,
+                            k: WIDTH as i32,
+                            alpha: 1.0,
+                            lda: DB_SIZE as i32,
+                            ldb: WIDTH as i32,
+                            beta: 0.0,
+                            ldc: DB_SIZE as i32,
+                        },
+                        &a_dev,
+                        &b_dev,
+                        &mut c_dev,
+                    )
+                    .unwrap();
+                }
+                dev.dtoh_sync_copy_into(&c_dev, &mut c_host).unwrap();
+            });
+        });
+    }
 
     group.finish();
-
-    // unsafe {
-    //     cuMemAllocHost_v2(c_host.as_mut_ptr() as *mut _, db_size * query_size*2);
-    // }
-
-    // let mut c_host_ptr: *mut c_void = std::ptr::null_mut();
-    // let bytesize = db_size * query_size * std::mem::size_of::<u16>();
-    // unsafe {
-    //     let _ = cuMemAllocHost_v2(&mut c_host_ptr, bytesize);
-    // }
-    //
-    // unsafe {
-    //     let _ = cuMemcpyDtoH_v2(c_host_ptr, *c_dev.device_ptr(), bytesize);
-    // }
 }
 
 criterion_group!(benches, cublas,);

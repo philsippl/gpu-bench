@@ -8,9 +8,11 @@ edition = "2021"
 [dependencies]
 cudarc = "0.10.0"
 rand = "0.8.5"
+ndarray = "0.15.3"
 
 [dev-dependencies]
 criterion = { version = "0.4"}
+ndarray = "0.15.3"
 
 [profile.release]
 opt-level = 3
@@ -29,5 +31,13 @@ name = "custom_kernel"
 harness = false
 
 [[bench]]
+name = "custom_kernel_triton"
+harness = false
+
+[[bench]]
 name = "cublas"
+harness = false
+
+[[bench]]
+name = "custom_kernel_2d"
 harness = false

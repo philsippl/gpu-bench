@@ -1,0 +1,142 @@
+use std::os::raw::c_void;
+
+use criterion::{criterion_group, criterion_main, Criterion};
+use cudarc::cublas::sys::{cublasMath_t, cublasSetMathMode};
+use cudarc::cublas::{result, sys, CudaBlas, Gemm, GemmConfig};
+use cudarc::driver::sys::{cuMemAllocHost_v2, cuMemcpyDtoH_v2};
+use cudarc::driver::{CudaDevice, DevicePtr, DevicePtrMut, LaunchAsync, LaunchConfig};
+use cudarc::nvrtc::compile_ptx;
+use rand::rngs::StdRng;
+use rand::{Rng, SeedableRng};
+
+const WIDTH: usize = 12800;
+const DB_SIZE: usize = 100000;
+const QUERY_SIZE: usize = 31;
+const RNG_SEED: u64 = 42;
+const BATCH_SIZE: usize = 100000;
+
+const PTX_SRC: &str = "
+extern \"C\" __global__ void carsten(double* input, unsigned short* output, int offset, int numElements) {
+    size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx < numElements) {
+        output[idx + offset] = static_cast<unsigned short>(input[idx]);
+    }
+}
+";
+
+fn create_random_matrix(n: usize, m: usize) -> Vec<f64> {
+    let mut rng = StdRng::seed_from_u64(RNG_SEED);
+    let total_size = n * m;
+    // (0..total_size).map(|_| rng.gen::<u16>() as f64).collect()
+    (0..total_size).map(|_| 1f64).collect()
+}
+
+fn cublas(c: &mut Criterion) {
+    let mut group = c.benchmark_group("cublas");
+
+    let dev = CudaDevice::new(0).unwrap();
+    let stream = dev.fork_default_stream().unwrap();
+    let ptx = compile_ptx(PTX_SRC).unwrap();
+    dev.load_ptx(ptx, "carsten", &["carsten"]).unwrap();
+    let f = dev.get_func("carsten", "carsten").unwrap();
+
+    let a_host = create_random_matrix(DB_SIZE, WIDTH);
+    let b_host = create_random_matrix(QUERY_SIZE, WIDTH);
+    let mut c_host = vec![0f64; BATCH_SIZE * QUERY_SIZE];
+    let mut final_host = vec![0u16; DB_SIZE * QUERY_SIZE];
+
+    let a_dev = dev.htod_sync_copy(&a_host).unwrap();
+    let b_dev = dev.htod_sync_copy(&b_host).unwrap();
+    let mut c_dev = dev.htod_sync_copy(&c_host).unwrap();
+    let mut final_dev = dev.htod_sync_copy(&final_host).unwrap();
+
+    let blas = CudaBlas::new(dev.clone()).unwrap();
+    unsafe {
+        blas.set_stream(Some(&stream));
+    }
+
+    let num_elements = 1000 * QUERY_SIZE;
+    let threads_per_block = 256;
+    let blocks_per_grid = (num_elements + threads_per_block - 1) / threads_per_block;
+    let cfg = LaunchConfig {
+        block_dim: (threads_per_block as u32, 1, 1),
+        grid_dim: (blocks_per_grid as u32, 1, 1),
+        shared_mem_bytes: 0,
+    };
+
+    // unsafe {
+    //     cuMemAllocHost_v2(final_host.as_mut_ptr() as *mut _, DB_SIZE * QUERY_SIZE*2);
+    // }
+
+    // unsafe {
+    //     cublasSetMathMode(blas.handle().clone(), cublasMath_t::CUBLAS_TF32_TENSOR_OP_MATH);
+    // }
+
+    group.bench_function("cublas + cast", |b| {
+        b.iter(|| {
+
+            unsafe {
+
+                let mut a_ptr = *a_dev.device_ptr();
+
+                for i in 0..1 {
+
+                    a_ptr += i * BATCH_SIZE as u64 * 8;
+
+                    result::dgemm(
+                        blas.handle().clone(),
+                        sys::cublasOperation_t::CUBLAS_OP_N,
+                        sys::cublasOperation_t::CUBLAS_OP_N,
+                        BATCH_SIZE as i32,
+                        QUERY_SIZE as i32,
+                        WIDTH as i32,
+                        &1f64,
+                        a_ptr as *const _,
+                        BATCH_SIZE as i32,
+                        *b_dev.device_ptr() as *const _,
+                        WIDTH as i32,
+                        &0f64,
+                        *c_dev.device_ptr_mut() as *mut _,
+                        BATCH_SIZE as i32,
+                    ).unwrap();
+
+                    // f.clone().launch_on_stream(
+                    //     &stream,
+                    //     cfg,
+                    //     (&c_dev, &mut final_dev, (i * BATCH_SIZE as u64 * QUERY_SIZE as u64) as i32, BATCH_SIZE as i32 * QUERY_SIZE as i32),
+                    // ).unwrap();
+                    // println!("{} {:?}", i, (i * BATCH_SIZE * QUERY_SIZE as u64));
+             
+                }
+            }
+
+            dev.wait_for(&stream).unwrap();
+
+            dev.dtoh_sync_copy_into(&c_dev, &mut c_host)
+                .unwrap();
+
+            // let a: u16= final_host.iter().sum();
+            // println!("sum: {:?}", a);
+
+        });
+    });
+
+    group.finish();
+
+    // unsafe {
+    //     cuMemAllocHost_v2(c_host.as_mut_ptr() as *mut _, db_size * query_size*2);
+    // }
+
+    // let mut c_host_ptr: *mut c_void = std::ptr::null_mut();
+    // let bytesize = db_size * query_size * std::mem::size_of::<u16>();
+    // unsafe {
+    //     let _ = cuMemAllocHost_v2(&mut c_host_ptr, bytesize);
+    // }
+    //
+    // unsafe {
+    //     let _ = cuMemcpyDtoH_v2(c_host_ptr, *c_dev.device_ptr(), bytesize);
+    // }
+}
+
+criterion_group!(benches, cublas,);
+criterion_main!(benches);

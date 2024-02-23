@@ -1,20 +1,21 @@
-use std::os::raw::c_void;
-
+/// Custom tiling kernel (each thread calculates one output element)
 use criterion::{criterion_group, criterion_main, Criterion};
-use cudarc::driver::sys::{cuMemAllocHost_v2, cuMemcpyDtoH_v2};
-use cudarc::driver::{CudaDevice, DevicePtr, DriverError, LaunchAsync, LaunchConfig};
+
+use cudarc::driver::sys::cuMemAllocHost_v2;
+use cudarc::driver::{CudaDevice, LaunchAsync, LaunchConfig};
 use cudarc::nvrtc::compile_ptx;
+use ndarray::Array2;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 
+const WIDTH: u32 = 12_800;
+const QUERY_SIZE: u32 = 32;
+const DB_SIZE: u32 = 100_000;
 const TILE_WIDTH: u32 = 32;
-const WIDTH: usize = 12800;
-const DB_SIZE: usize = 100000;
-const QUERY_SIZE: usize = 31;
 const RNG_SEED: u64 = 42;
 
 const PTX_SRC: &str = "
-#define TILE_WIDTH 32  // Define the width of the tile
+#define TILE_WIDTH 32
 
 extern \"C\" __global__ void matmul(unsigned short* A, unsigned short* B, unsigned short* C, int M, int N, int K) {
     __shared__ unsigned short As[TILE_WIDTH][TILE_WIDTH];
@@ -48,77 +49,75 @@ extern \"C\" __global__ void matmul(unsigned short* A, unsigned short* B, unsign
     }
 
     if (Row < M && Col < N)
-        C[Row * N + Col] += tmpSum;
+        C[Row * N + Col] = tmpSum;
 }
 ";
-
-fn create_random_matrix(n: usize, m: usize) -> Vec<u16> {
-    let mut rng = StdRng::seed_from_u64(RNG_SEED);
-    (0..n * m).map(|_| rng.gen::<u16>()).collect()
-}
 
 fn custom_kernel(c: &mut Criterion) {
     let mut group = c.benchmark_group("custom_kernel");
 
     let dev = CudaDevice::new(0).unwrap();
     let ptx = compile_ptx(PTX_SRC).unwrap();
+    let mut rng = StdRng::seed_from_u64(RNG_SEED);
+
     dev.load_ptx(ptx, "matmul", &["matmul"]).unwrap();
     let f = dev.get_func("matmul", "matmul").unwrap();
 
-    let a_host = create_random_matrix(DB_SIZE, WIDTH);
-    let b_host = create_random_matrix(QUERY_SIZE, WIDTH);
-    let mut c_host = vec![0f64; DB_SIZE * QUERY_SIZE];
-
+    let a_host = (0..DB_SIZE * WIDTH).map(|_| rng.gen::<u16>() as u16).collect::<Vec<_>>();
+    let b_host = (0..QUERY_SIZE * WIDTH).map(|_| rng.gen_range(0..2) as u16).collect::<Vec<_>>();
+    
     let a_dev = dev.htod_sync_copy(&a_host).unwrap();
     let b_dev = dev.htod_sync_copy(&b_host).unwrap();
-    let mut c_dev = dev.htod_sync_copy(&c_host).unwrap();
 
     let cfg = LaunchConfig {
         block_dim: (TILE_WIDTH, TILE_WIDTH, 1),
         grid_dim: (
-            (QUERY_SIZE as u32 + TILE_WIDTH - 1) / TILE_WIDTH,
-            (DB_SIZE as u32 + TILE_WIDTH - 1) / TILE_WIDTH,
+            QUERY_SIZE.div_ceil(TILE_WIDTH),
+            DB_SIZE.div_ceil(TILE_WIDTH),
             1,
         ),
         shared_mem_bytes: 0,
     };
 
-    group.bench_function("matmul u16", |b| {
-        b.iter(|| {
-            unsafe {
-                f.clone().launch(
-                    cfg,
-                    (
-                        &a_dev,
-                        &b_dev,
-                        &mut c_dev,
-                        DB_SIZE as i32,
-                        QUERY_SIZE as i32,
-                        WIDTH as i32,
-                    ),
-                )
-            }
-            .unwrap();
+    let mut c_host = vec![0u16; (DB_SIZE * QUERY_SIZE) as usize];
+    let mut c_dev = dev.htod_sync_copy(&c_host).unwrap();
 
-            dev.dtoh_sync_copy_into(&c_dev, &mut c_host).unwrap();
-        });
-    });
+    unsafe {
+        cuMemAllocHost_v2(c_host.as_mut_ptr() as *mut _, (DB_SIZE * QUERY_SIZE* 2) as usize);
+    }
+
+    group.bench_function(
+        format!("custom kernel naïve {} x {}", DB_SIZE, QUERY_SIZE),
+        |b| {
+            b.iter(|| {
+                unsafe {
+                    f.clone().launch(
+                        cfg,
+                        (
+                            &a_dev,
+                            &b_dev,
+                            &mut c_dev,
+                            DB_SIZE as i32,
+                            QUERY_SIZE as i32,
+                            WIDTH as i32,
+                        ),
+                    )
+                }
+                .unwrap();
+
+                dev.dtoh_sync_copy_into(&c_dev, &mut c_host).unwrap();
+            });
+        },
+    );
+
+    // Vanilla ndArray version for sanity check
+    let a_nda = Array2::from_shape_vec((DB_SIZE as usize, WIDTH as usize), a_host.clone()).unwrap();
+    let b_nda =
+        Array2::from_shape_vec((WIDTH as usize, QUERY_SIZE as usize), b_host.clone()).unwrap();
+    let c_nda = a_nda.dot(&b_nda).into_raw_vec();
+    assert_eq!(c_nda, c_host, "GPU result does not match CPU impl");
 
     group.finish();
-
-    // unsafe {
-    //     cuMemAllocHost_v2(c_host.as_mut_ptr() as *mut _, db_size * query_size*2);
-    // }
-
-    // let mut c_host_ptr: *mut c_void = std::ptr::null_mut();
-    // let bytesize = db_size * query_size * std::mem::size_of::<u16>();
-    // unsafe {
-    //     let _ = cuMemAllocHost_v2(&mut c_host_ptr, bytesize);
-    // }
-    //
-    // unsafe {
-    //     let _ = cuMemcpyDtoH_v2(c_host_ptr, *c_dev.device_ptr(), bytesize);
-    // }
 }
 
 criterion_group!(benches, custom_kernel,);
