@@ -12,7 +12,7 @@ use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 
 const WIDTH: usize = 12_800;
-const QUERY_SIZE: usize = 31;
+const QUERY_SIZE: usize = 32;
 const DB_SIZE: usize = 100_000;
 const RNG_SEED: u64 = 42;
 
@@ -45,7 +45,7 @@ fn cublas(c: &mut Criterion) {
                     // See the supported types here: https://docs.nvidia.com/cuda/cublas/index.html#cublasgemmex
                     gemm_ex(
                         blas.handle().clone(),
-                        sys::cublasOperation_t::CUBLAS_OP_N,
+                        sys::cublasOperation_t::CUBLAS_OP_T,
                         sys::cublasOperation_t::CUBLAS_OP_N,
                         DB_SIZE as i32,
                         QUERY_SIZE as i32,
@@ -53,7 +53,7 @@ fn cublas(c: &mut Criterion) {
                         &1 as *const i32 as *const c_void,
                         *a_dev.device_ptr() as *const _,
                         sys::cublasDataType_t::CUDA_R_8I,
-                        DB_SIZE as i32,
+                        WIDTH as i32,
                         *b_dev.device_ptr() as *const _,
                         sys::cublasDataType_t::CUDA_R_8I,
                         WIDTH as i32,
