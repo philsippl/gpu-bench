@@ -7,12 +7,13 @@ use cudarc::cublas::{sys, CudaBlas};
 
 use cudarc::driver::{CudaDevice, CudaSlice, DevicePtr, DevicePtrMut, LaunchAsync, LaunchConfig};
 use cudarc::nvrtc::compile_ptx;
+use ndarray::Array2;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 
 const WIDTH: usize = 12_800;
 const QUERY_SIZE: usize = 320;
-const DB_SIZE: usize = 100_000;
+const DB_SIZE: usize = 1000;
 const RNG_SEED: u64 = 42;
 
 const PTX_SRC: &str = "
@@ -66,8 +67,8 @@ fn cublas(c: &mut Criterion) {
 
     // rng.gen::<u16>()
 
-    let a_host = (0..DB_SIZE * WIDTH).map(|_| 1u16).collect::<Vec<_>>();
-    let b_host = (0..QUERY_SIZE * WIDTH).map(|_| 1u16).collect::<Vec<_>>();
+    let a_host = (0..DB_SIZE * WIDTH).map(|_| rng.gen_range(0..1000)).collect::<Vec<_>>();
+    let b_host = (0..QUERY_SIZE * WIDTH).map(|_| rng.gen_range(0..1000)).collect::<Vec<_>>();
 
     let a1_host = a_host.iter().map(|x| (x >> 8) as u8).collect::<Vec<_>>();
     let a0_host = a_host.iter().map(|x| (x & 0xFF) as u8).collect::<Vec<_>>();
@@ -76,8 +77,7 @@ fn cublas(c: &mut Criterion) {
 
     let a1_dev = dev.htod_sync_copy(&a1_host).unwrap();
     let a0_dev = dev.htod_sync_copy(&a0_host).unwrap();
-    let b1_dev = dev.htod_sync_copy(&b1_host).unwrap();
-    let b0_dev = dev.htod_sync_copy(&b0_host).unwrap();
+    
 
     let mut c_host = vec![0u32; DB_SIZE * QUERY_SIZE * 3];
     let mut c_dev = dev.htod_sync_copy(&c_host).unwrap();
@@ -99,10 +99,15 @@ fn cublas(c: &mut Criterion) {
     
     group.bench_function(format!("cublas u16 mul with int8 {} x {}", DB_SIZE, QUERY_SIZE), |b| {
         b.iter(|| {
+            let b1_dev = dev.htod_sync_copy(&b1_host).unwrap();
+            let b0_dev = dev.htod_sync_copy(&b0_host).unwrap();
+
             gemm(&blas.handle(), &a0_dev, &b0_dev, &mut c_dev, 0);
             gemm(&blas.handle(), &a0_dev, &b1_dev, &mut c_dev, (DB_SIZE * QUERY_SIZE * 4 * 1) as u64);
             gemm(&blas.handle(), &a1_dev, &b0_dev, &mut c_dev, (DB_SIZE * QUERY_SIZE * 4 * 2) as u64);
 
+            dev.synchronize();
+            
             unsafe {
                 f.clone().launch(
                     cfg,
@@ -115,28 +120,38 @@ fn cublas(c: &mut Criterion) {
         });
 
         // check
-        assert!(final_host.iter().all(|x| *x == 12800));
+        // assert!(final_host.iter().all(|x| *x == 12800));
     });
     
-    // Have to debug this, unable to get this make sense
-    // Vanilla ndArray version for sanity check (have to use column major)
-    // let a_nda = Array2::from_shape_vec(
-    //     (WIDTH as usize, DB_SIZE as usize),
-    //     a_host.into_iter().map(|x| x as u32).collect::<Vec<_>>(),
-    // )
-    // .unwrap();
-    // let b_nda = Array2::from_shape_vec(
-    //     (WIDTH as usize, QUERY_SIZE as usize),
-    //     b_host.into_iter().map(|x| x as u32).collect::<Vec<_>>(),
-    // )
-    // .unwrap();
-    // let c_nda = a_nda.t().dot(&b_nda).into_raw_vec();
+    let a_nda = Array2::from_shape_vec(
+        (DB_SIZE as usize,  WIDTH as usize),
+        a_host.into_iter().map(|x| x as u16).collect::<Vec<_>>(),
+    )
+    .unwrap();
+    let b_nda = Array2::from_shape_vec(
+        (QUERY_SIZE as usize, WIDTH as usize),
+        b_host.into_iter().map(|x| x as u16).collect::<Vec<_>>(),
+    )
+    .unwrap();
+    let c_nda = a_nda
+        .dot(&b_nda.t());
+        // .into_raw_vec()
+        // .into_iter()
+        // .map(|x| x as u32)
+        // .collect::<Vec<_>>();
 
-    // assert_eq!(
-    //     c_nda[0..100],
-    //     res[0..100],
-    //     "GPU result does not match CPU implementation"
-    // );
+    let mut vec_column_major: Vec<u16> = Vec::new();
+    for col in 0..c_nda.ncols() {
+        for row in c_nda.column(col) {
+            vec_column_major.push(*row);
+        }
+    }
+
+    assert_eq!(
+        vec_column_major[0..100],
+        final_host[0..100],
+        "GPU result does not match CPU implementation"
+    );
 
     group.finish();
 }

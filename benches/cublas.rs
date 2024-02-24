@@ -72,25 +72,31 @@ fn cublas(c: &mut Criterion) {
 
         // Vanilla ndArray version for sanity check (have to use column major)
         let a_nda = Array2::from_shape_vec(
-            (WIDTH as usize, DB_SIZE as usize),
+            (DB_SIZE as usize,  WIDTH as usize),
             a_host.into_iter().map(|x| x as u16).collect::<Vec<_>>(),
         )
         .unwrap();
         let b_nda = Array2::from_shape_vec(
-            (WIDTH as usize, QUERY_SIZE as usize),
+            (QUERY_SIZE as usize, WIDTH as usize),
             b_host.into_iter().map(|x| x as u16).collect::<Vec<_>>(),
         )
         .unwrap();
         let c_nda = a_nda
-            .t()
-            .dot(&b_nda)
-            .into_raw_vec()
-            .into_iter()
-            .map(|x| x as u32)
-            .collect::<Vec<_>>();
+            .dot(&b_nda.t());
+            // .into_raw_vec()
+            // .into_iter()
+            // .map(|x| x as u32)
+            // .collect::<Vec<_>>();
+
+        let mut vec_column_major: Vec<u16> = Vec::new();
+        for col in 0..c_nda.ncols() {
+            for row in c_nda.column(col) {
+                vec_column_major.push(*row);
+            }
+        }
 
         assert_eq!(
-            c_nda[0..100],
+            vec_column_major.into_iter().map(|x| x as u32).collect::<Vec<_>>()[0..100],
             c_host[0..100],
             "GPU result does not match CPU implementation"
         );
