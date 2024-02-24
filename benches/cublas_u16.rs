@@ -55,10 +55,6 @@ fn cublas(c: &mut Criterion) {
     let dev = CudaDevice::new(0).unwrap();
     let blas = CudaBlas::new(dev.clone()).unwrap();
 
-    // We could do 3 muls, but (a1 + a0) might overflow?
-    // p1 = a1 * b1
-    // p2 = a0 * b0
-    // p3 = (a1 + a0) * (b1 + b0)
     // rng.gen::<u16>()
 
     let a_host = (0..DB_SIZE * WIDTH).map(|_| 1u16).collect::<Vec<_>>();
@@ -74,29 +70,26 @@ fn cublas(c: &mut Criterion) {
     let b1_dev = dev.htod_sync_copy(&b1_host).unwrap();
     let b0_dev = dev.htod_sync_copy(&b0_host).unwrap();
 
-    let mut c_host = vec![0u32; DB_SIZE * QUERY_SIZE * 4];
+    let mut c_host = vec![0u32; DB_SIZE * QUERY_SIZE * 3];
     let mut c_dev = dev.htod_sync_copy(&c_host).unwrap();
     
     group.bench_function(format!("cublas u16 mul with int8 {} x {}", DB_SIZE, QUERY_SIZE), |b| {
         b.iter(|| {
-            gemm(&blas.handle(), &a1_dev, &b1_dev, &mut c_dev, 0);
-            gemm(&blas.handle(), &a1_dev, &b0_dev, &mut c_dev, (DB_SIZE * QUERY_SIZE * 4 * 1) as u64);
-            gemm(&blas.handle(), &a0_dev, &b1_dev, &mut c_dev, (DB_SIZE * QUERY_SIZE * 4 * 2) as u64);
-            gemm(&blas.handle(), &a0_dev, &b0_dev, &mut c_dev, (DB_SIZE * QUERY_SIZE * 4 * 3) as u64);
+            gemm(&blas.handle(), &a0_dev, &b0_dev, &mut c_dev, 0);
+            gemm(&blas.handle(), &a0_dev, &b1_dev, &mut c_dev, (DB_SIZE * QUERY_SIZE * 4 * 1) as u64);
+            gemm(&blas.handle(), &a1_dev, &b0_dev, &mut c_dev, (DB_SIZE * QUERY_SIZE * 4 * 2) as u64);
 
             dev.dtoh_sync_copy_into(&c_dev, &mut c_host).unwrap();
 
             let c1 = &c_host[DB_SIZE * QUERY_SIZE * 0..DB_SIZE * QUERY_SIZE * 1];
             let c2 = &c_host[DB_SIZE * QUERY_SIZE * 1..DB_SIZE * QUERY_SIZE * 2];
             let c3 = &c_host[DB_SIZE * QUERY_SIZE * 2..DB_SIZE * QUERY_SIZE * 3];
-            let c4 = &c_host[DB_SIZE * QUERY_SIZE * 3..DB_SIZE * QUERY_SIZE * 4];
             
             let res = c1
                 .into_iter()
                 .zip(c2)
                 .zip(c3)
-                .zip(c4)
-                .map(|(((c1, c2), c3), c4)| (c4 + ((c3 + c2) << 8) + (c1 << 16)) as u16)
+                .map(|((c1, c2), c3)| (c1 + ((c2 + c3) << 8)) as u16)
                 .collect::<Vec<_>>();
 
             // let res = c1.into_par_iter() 
