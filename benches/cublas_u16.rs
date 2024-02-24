@@ -5,15 +5,24 @@ use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use cudarc::cublas::result::gemm_ex;
 use cudarc::cublas::{sys, CudaBlas};
 
-use cudarc::driver::{CudaDevice, CudaSlice, DevicePtr, DevicePtrMut};
+use cudarc::driver::{CudaDevice, CudaSlice, DevicePtr, DevicePtrMut, LaunchAsync, LaunchConfig};
+use cudarc::nvrtc::compile_ptx;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
-use rayon::iter::{IndexedParallelIterator, IntoParallelIterator, ParallelIterator};
 
 const WIDTH: usize = 12_800;
-const QUERY_SIZE: usize = 32;
+const QUERY_SIZE: usize = 320;
 const DB_SIZE: usize = 100_000;
 const RNG_SEED: u64 = 42;
+
+const PTX_SRC: &str = "
+extern \"C\" __global__ void calc_u16(int* c, short* output, size_t numElements) {
+    size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx < numElements) {
+        output[idx] = (c[idx] + ((c[idx + numElements] + c[idx + numElements * 2]) << 8));
+    }
+}
+";
 
 fn gemm(
     handle: &sys::cublasHandle_t,
@@ -72,6 +81,21 @@ fn cublas(c: &mut Criterion) {
 
     let mut c_host = vec![0u32; DB_SIZE * QUERY_SIZE * 3];
     let mut c_dev = dev.htod_sync_copy(&c_host).unwrap();
+    let mut final_host = vec![0u16; DB_SIZE * QUERY_SIZE];
+    let mut final_dev = dev.htod_sync_copy(&final_host).unwrap();
+
+    let ptx = compile_ptx(PTX_SRC).unwrap();
+    dev.load_ptx(ptx, "calc_u16", &["calc_u16"]).unwrap();
+    let f = dev.get_func("calc_u16", "calc_u16").unwrap();
+
+    let num_elements = DB_SIZE * QUERY_SIZE;
+    let threads_per_block = 256;
+    let blocks_per_grid = (num_elements + threads_per_block - 1) / threads_per_block;
+    let cfg = LaunchConfig {
+        block_dim: (threads_per_block as u32, 1, 1),
+        grid_dim: (blocks_per_grid as u32, 1, 1),
+        shared_mem_bytes: 0,
+    };
     
     group.bench_function(format!("cublas u16 mul with int8 {} x {}", DB_SIZE, QUERY_SIZE), |b| {
         b.iter(|| {
@@ -79,29 +103,19 @@ fn cublas(c: &mut Criterion) {
             gemm(&blas.handle(), &a0_dev, &b1_dev, &mut c_dev, (DB_SIZE * QUERY_SIZE * 4 * 1) as u64);
             gemm(&blas.handle(), &a1_dev, &b0_dev, &mut c_dev, (DB_SIZE * QUERY_SIZE * 4 * 2) as u64);
 
-            dev.dtoh_sync_copy_into(&c_dev, &mut c_host).unwrap();
+            unsafe {
+                f.clone().launch(
+                    cfg,
+                    (&c_dev, &mut final_dev, (DB_SIZE * QUERY_SIZE) as u64),
+                )
+            }
+            .unwrap();
 
-            let c1 = &c_host[DB_SIZE * QUERY_SIZE * 0..DB_SIZE * QUERY_SIZE * 1];
-            let c2 = &c_host[DB_SIZE * QUERY_SIZE * 1..DB_SIZE * QUERY_SIZE * 2];
-            let c3 = &c_host[DB_SIZE * QUERY_SIZE * 2..DB_SIZE * QUERY_SIZE * 3];
-            
-            let res = c1
-                .into_iter()
-                .zip(c2)
-                .zip(c3)
-                .map(|((c1, c2), c3)| (c1 + ((c2 + c3) << 8)) as u16)
-                .collect::<Vec<_>>();
-
-            // let res = c1.into_par_iter() 
-            //             .zip(c2.into_par_iter())
-            //             .zip(c3.into_par_iter())
-            //             .zip(c4.into_par_iter())
-            //             .map(|(((c1, c2), c3), c4)| (c4 + ((c3 + c2) << 8) + (c1 << 16)) as u16)
-            //             .collect::<Vec<_>>();
-
-            black_box(res);
+            dev.dtoh_sync_copy_into(&final_dev, &mut final_host).unwrap();
         });
-        // assert!(res.iter().all(|x| *x == 12800));
+
+        // check
+        assert!(final_host.iter().all(|x| *x == 12800));
     });
     
     // Have to debug this, unable to get this make sense
