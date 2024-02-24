@@ -204,6 +204,7 @@ dependencies = [
  "cudarc",
  "ndarray",
  "rand",
+ "rayon",
 ]
 
 [[package]]
