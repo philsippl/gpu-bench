@@ -43,6 +43,10 @@ debug = true
 #name = "custom_kernel_2d"
 #harness = false
 
+#[[bench]]
+#name = "cublas_u14"
+#harness = false
+
 [[bench]]
 name = "cublas_u16"
 harness = false
