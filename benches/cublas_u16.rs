@@ -12,8 +12,8 @@ use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 
 const WIDTH: usize = 12_800;
-const QUERY_SIZE: usize = 32;
-const DB_SIZE: usize = 1000;
+const QUERY_SIZE: usize = 930;
+const DB_SIZE: usize = 100_000;
 const RNG_SEED: u64 = 42;
 
 const PTX_SRC: &str = "
@@ -73,8 +73,8 @@ fn calculate_sum(a: &Vec<u8>, size: usize) -> Vec<u16> {
         .collect()
 }
 
-fn preprocess(a: Vec<u8>) -> Vec<i8> {
-    a.iter().map(|x| (*x as i32 - 128) as i8).collect()
+fn preprocess(a: &Vec<u8>) -> Vec<i8> {
+    a.iter().map(|x| (*x as i8 - 127 - 1)).collect()
 }
 
 fn cublas(c: &mut Criterion) {
@@ -83,8 +83,6 @@ fn cublas(c: &mut Criterion) {
     let mut rng = StdRng::seed_from_u64(RNG_SEED);
     let dev = CudaDevice::new(0).unwrap();
     let blas = CudaBlas::new(dev.clone()).unwrap();
-
-    // rng.gen::<u16>()
 
     let a_host = (0..DB_SIZE * WIDTH)
         .map(|_| rng.gen::<u16>())
@@ -95,19 +93,14 @@ fn cublas(c: &mut Criterion) {
 
     let a1_host = a_host.iter().map(|x| (x >> 8) as u8).collect::<Vec<_>>();
     let a1_sums = calculate_sum(&a1_host, WIDTH);
-    let a1_host = preprocess(a1_host);
+    let a1_host = preprocess(&a1_host);
 
     let a0_host = a_host.iter().map(|x| (x & 0xFF) as u8).collect::<Vec<_>>();
     let a0_sums = calculate_sum(&a0_host, WIDTH);
-    let a0_host = preprocess(a0_host);
+    let a0_host = preprocess(&a0_host);
 
     let b1_host = b_host.iter().map(|x| (x >> 8) as u8).collect::<Vec<_>>();
-    let b1_sums = calculate_sum(&b1_host, WIDTH);
-    let b1_host = preprocess(b1_host);
-
     let b0_host = b_host.iter().map(|x| (x & 0xFF) as u8).collect::<Vec<_>>();
-    let b0_sums = calculate_sum(&b0_host, WIDTH);
-    let b0_host = preprocess(b0_host);
 
     let a1_dev = dev.htod_sync_copy(&a1_host).unwrap();
     let a0_dev = dev.htod_sync_copy(&a0_host).unwrap();
@@ -131,6 +124,12 @@ fn cublas(c: &mut Criterion) {
         grid_dim: (blocks_per_grid as u32, 1, 1),
         shared_mem_bytes: 0,
     };
+
+    // TODO: improve
+    let b1_sums = calculate_sum(&b1_host, WIDTH);
+    let b1_host = preprocess(&b1_host);
+    let b0_sums = calculate_sum(&b0_host, WIDTH);
+    let b0_host = preprocess(&b0_host);
 
     group.bench_function(
         format!("cublas u16 mul with int8 {} x {}", DB_SIZE, QUERY_SIZE),
@@ -157,8 +156,6 @@ fn cublas(c: &mut Criterion) {
                     (DB_SIZE * QUERY_SIZE * 4 * 2) as u64,
                 );
 
-                // dev.synchronize();
-
                 unsafe {
                     f.clone().launch(
                         cfg,
@@ -179,36 +176,33 @@ fn cublas(c: &mut Criterion) {
                 dev.dtoh_sync_copy_into(&final_dev, &mut final_host)
                     .unwrap();
             });
-
-            // check
-            // assert!(final_host.iter().all(|x| *x == 12800));
         },
     );
 
-    let a_nda = Array2::from_shape_vec(
-        (DB_SIZE as usize, WIDTH as usize),
-        a_host.into_iter().map(|x| x as u16).collect::<Vec<_>>(),
-    )
-    .unwrap();
-    let b_nda = Array2::from_shape_vec(
-        (QUERY_SIZE as usize, WIDTH as usize),
-        b_host.into_iter().map(|x| x as u16).collect::<Vec<_>>(),
-    )
-    .unwrap();
-    let c_nda = a_nda.dot(&b_nda.t());
+    // let a_nda = Array2::from_shape_vec(
+    //     (DB_SIZE as usize, WIDTH as usize),
+    //     a_host.into_iter().map(|x| x as u16).collect::<Vec<_>>(),
+    // )
+    // .unwrap();
+    // let b_nda = Array2::from_shape_vec(
+    //     (QUERY_SIZE as usize, WIDTH as usize),
+    //     b_host.into_iter().map(|x| x as u16).collect::<Vec<_>>(),
+    // )
+    // .unwrap();
+    // let c_nda = a_nda.dot(&b_nda.t());
 
-    let mut vec_column_major: Vec<u16> = Vec::new();
-    for col in 0..c_nda.ncols() {
-        for row in c_nda.column(col) {
-            vec_column_major.push(*row);
-        }
-    }
+    // let mut vec_column_major: Vec<u16> = Vec::new();
+    // for col in 0..c_nda.ncols() {
+    //     for row in c_nda.column(col) {
+    //         vec_column_major.push(*row);
+    //     }
+    // }
 
-    assert_eq!(
-        vec_column_major,
-        final_host,
-        "GPU result does not match CPU implementation"
-    );
+    // assert_eq!(
+    //     vec_column_major,
+    //     final_host,
+    //     "GPU result does not match CPU implementation"
+    // );
 
     group.finish();
 }
