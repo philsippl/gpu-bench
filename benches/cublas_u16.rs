@@ -17,7 +17,7 @@ const DB_SIZE: usize = 100_000;
 const RNG_SEED: u64 = 42;
 
 const PTX_SRC: &str = "
-extern \"C\" __global__ void calc_u16(int* c, unsigned short* output, unsigned short* a0Sums, unsigned short* a1Sums, unsigned short* b0Sums, unsigned short* b1Sums, size_t numRows, size_t numElements) {
+extern \"C\" __global__ void calc_u16(int* c, unsigned short* output, unsigned int* a0Sums, unsigned int* a1Sums, unsigned int* b0Sums, unsigned int* b1Sums, size_t numRows, size_t numElements) {
     size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx < numElements) {
         // Correct the results to simulate u8
@@ -40,26 +40,29 @@ fn gemm(
     b: &CudaSlice<u8>,
     c: &mut CudaSlice<i32>,
     c_offset: u64,
+    m: i32,
+    n: i32,
+    k: i32,
 ) {
     unsafe {
         gemm_ex(
             handle.clone(),
             sys::cublasOperation_t::CUBLAS_OP_T,
             sys::cublasOperation_t::CUBLAS_OP_N,
-            DB_SIZE as i32,
-            QUERY_SIZE as i32,
-            WIDTH as i32,
+            m as i32,
+            n as i32,
+            k as i32,
             &1 as *const i32 as *const c_void,
             *a.device_ptr() as *const _,
             sys::cublasDataType_t::CUDA_R_8I,
-            WIDTH as i32,
+            k as i32,
             *b.device_ptr() as *const _,
             sys::cublasDataType_t::CUDA_R_8I,
-            WIDTH as i32,
+            k as i32,
             &0 as *const i32 as *const c_void,
             (*c.device_ptr_mut() + c_offset) as *mut _,
             sys::cublasDataType_t::CUDA_R_32I,
-            DB_SIZE as i32,
+            m as i32,
             sys::cublasComputeType_t::CUBLAS_COMPUTE_32I,
             sys::cublasGemmAlgo_t::CUBLAS_GEMM_DEFAULT,
         )
@@ -85,10 +88,10 @@ fn cublas(c: &mut Criterion) {
     let blas = CudaBlas::new(dev.clone()).unwrap();
 
     let a_host = (0..DB_SIZE * WIDTH)
-        .map(|_| rng.gen::<u16>())
+        .map(|_| 1u16)
         .collect::<Vec<_>>();
     let b_host = (0..QUERY_SIZE * WIDTH)
-        .map(|_| rng.gen::<u16>())
+        .map(|_| 1u16)
         .collect::<Vec<_>>();
 
     let mut a1_host = a_host.iter().map(|x| (x >> 8) as u8).collect::<Vec<_>>();
@@ -98,9 +101,6 @@ fn cublas(c: &mut Criterion) {
     let mut a0_host = a_host.iter().map(|x| (x & 0xFF) as u8).collect::<Vec<_>>();
     let a0_sums = calculate_sum(&a0_host, WIDTH);
     preprocess(&mut a0_host);
-
-    let mut b1_host = b_host.iter().map(|x| (x >> 8) as u8).collect::<Vec<_>>();
-    let mut b0_host = b_host.iter().map(|x| (x & 0xFF) as u8).collect::<Vec<_>>();
 
     let a1_dev = dev.htod_sync_copy(&a1_host).unwrap();
     let a0_dev = dev.htod_sync_copy(&a0_host).unwrap();
@@ -125,27 +125,76 @@ fn cublas(c: &mut Criterion) {
         shared_mem_bytes: 0,
     };
 
+    let ones = [1u8; WIDTH];
+    let mut ones_dev = dev.htod_sync_copy(&ones).unwrap();
+
+    let mut b1_host = b_host.iter().map(|x| (x >> 8) as u8).collect::<Vec<_>>();
+    let mut b0_host = b_host.iter().map(|x| (x & 0xFF) as u8).collect::<Vec<_>>();
+
+    let mut b1_sums = [0i32; QUERY_SIZE];
+    let mut b1_sums_dev = dev.htod_sync_copy(&b1_sums).unwrap();
+    let mut b0_sums = [0i32; QUERY_SIZE];
+    let mut b0_sums_dev = dev.htod_sync_copy(&b0_sums).unwrap();
+
     group.bench_function(
         format!("cublas u16 mul with int8 {} x {}", DB_SIZE, QUERY_SIZE),
         |b| {
             b.iter(|| {
-                let b1_sums = calculate_sum(&b1_host, WIDTH);
                 preprocess(&mut b1_host);
-                let b0_sums = calculate_sum(&b0_host, WIDTH);
                 preprocess(&mut b0_host);
 
                 let b1_dev = dev.htod_sync_copy(&b1_host).unwrap();
                 let b0_dev = dev.htod_sync_copy(&b0_host).unwrap();
-                let b1_sums_dev = dev.htod_sync_copy(&b1_sums).unwrap();
-                let b0_sums_dev = dev.htod_sync_copy(&b0_sums).unwrap();
 
-                gemm(&blas.handle(), &a0_dev, &b0_dev, &mut c_dev, 0);
+                gemm(
+                    &blas.handle(),
+                    &b1_dev,
+                    &ones_dev,
+                    &mut b1_sums_dev,
+                    0,
+                    QUERY_SIZE as i32,
+                    1,
+                    WIDTH as i32,
+                );
+
+                gemm(
+                    &blas.handle(),
+                    &b0_dev,
+                    &ones_dev,
+                    &mut b0_sums_dev,
+                    0,
+                    QUERY_SIZE as i32,
+                    1,
+                    WIDTH as i32,
+                );
+
+                // dev.dtoh_sync_copy_into(&b0_sums_dev, &mut b0_sums)
+                //     .unwrap();
+
+                // println!("{:?}", b0_sums);
+
+                let b1_dev = dev.htod_sync_copy(&b1_host).unwrap();
+                let b0_dev = dev.htod_sync_copy(&b0_host).unwrap();
+
+                gemm(
+                    &blas.handle(),
+                    &a0_dev,
+                    &b0_dev,
+                    &mut c_dev,
+                    0,
+                    DB_SIZE as i32,
+                    QUERY_SIZE as i32,
+                    WIDTH as i32,
+                );
                 gemm(
                     &blas.handle(),
                     &a0_dev,
                     &b1_dev,
                     &mut c_dev,
                     (DB_SIZE * QUERY_SIZE * 4 * 1) as u64,
+                    DB_SIZE as i32,
+                    QUERY_SIZE as i32,
+                    WIDTH as i32,
                 );
                 gemm(
                     &blas.handle(),
@@ -153,6 +202,9 @@ fn cublas(c: &mut Criterion) {
                     &b0_dev,
                     &mut c_dev,
                     (DB_SIZE * QUERY_SIZE * 4 * 2) as u64,
+                    DB_SIZE as i32,
+                    QUERY_SIZE as i32,
+                    WIDTH as i32,
                 );
 
                 unsafe {
@@ -178,30 +230,29 @@ fn cublas(c: &mut Criterion) {
         },
     );
 
-    // let a_nda = Array2::from_shape_vec(
-    //     (DB_SIZE as usize, WIDTH as usize),
-    //     a_host.into_iter().map(|x| x as u16).collect::<Vec<_>>(),
-    // )
-    // .unwrap();
-    // let b_nda = Array2::from_shape_vec(
-    //     (QUERY_SIZE as usize, WIDTH as usize),
-    //     b_host.into_iter().map(|x| x as u16).collect::<Vec<_>>(),
-    // )
-    // .unwrap();
-    // let c_nda = a_nda.dot(&b_nda.t());
+    let a_nda = Array2::from_shape_vec(
+        (DB_SIZE as usize, WIDTH as usize),
+        a_host.into_iter().map(|x| x as u16).collect::<Vec<_>>(),
+    )
+    .unwrap();
+    let b_nda = Array2::from_shape_vec(
+        (QUERY_SIZE as usize, WIDTH as usize),
+        b_host.into_iter().map(|x| x as u16).collect::<Vec<_>>(),
+    )
+    .unwrap();
+    let c_nda = a_nda.dot(&b_nda.t());
 
-    // let mut vec_column_major: Vec<u16> = Vec::new();
-    // for col in 0..c_nda.ncols() {
-    //     for row in c_nda.column(col) {
-    //         vec_column_major.push(*row);
-    //     }
-    // }
+    let mut vec_column_major: Vec<u16> = Vec::new();
+    for col in 0..c_nda.ncols() {
+        for row in c_nda.column(col) {
+            vec_column_major.push(*row);
+        }
+    }
 
-    // assert_eq!(
-    //     vec_column_major,
-    //     final_host,
-    //     "GPU result does not match CPU implementation"
-    // );
+    assert_eq!(
+        vec_column_major, final_host,
+        "GPU result does not match CPU implementation"
+    );
 
     group.finish();
 }
