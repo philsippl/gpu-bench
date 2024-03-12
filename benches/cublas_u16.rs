@@ -1,6 +1,6 @@
 use std::ffi::c_void;
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use criterion::{black_box, criterion_group, criterion_main, Criterion, Throughput};
 
 use cudarc::cublas::result::gemm_ex;
 use cudarc::cublas::{sys, CudaBlas};
@@ -147,6 +147,8 @@ fn cublas(c: &mut Criterion) {
     preprocess(&mut b1_host);
     preprocess(&mut b0_host);
 
+    group.throughput(Throughput::Elements((DB_SIZE * QUERY_SIZE / 31) as u64));
+    
     group.bench_function(
         format!("cublas u16 mul with int8 {} x {}", DB_SIZE, QUERY_SIZE),
         |b| {

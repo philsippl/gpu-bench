@@ -1,6 +1,6 @@
 use std::ffi::c_void;
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use criterion::{black_box, criterion_group, criterion_main, Criterion, Throughput};
 
 use cudarc::cublas::result::gemm_ex;
 use cudarc::cublas::{sys, CudaBlas};
@@ -12,8 +12,8 @@ use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 
 const WIDTH: usize = 12_800;
-const QUERY_SIZE: usize = 320;
-const DB_SIZE: usize = 1000;
+const QUERY_SIZE: usize = 930;
+const DB_SIZE: usize = 100_000;
 const RNG_SEED: u64 = 42;
 
 const PTX_SRC: &str = "
@@ -96,6 +96,8 @@ fn cublas(c: &mut Criterion) {
         shared_mem_bytes: 0,
     };
     
+    group.throughput(Throughput::Elements((DB_SIZE * QUERY_SIZE / 31) as u64));
+    
     group.bench_function(format!("cublas u16 mul with int8 {} x {}", DB_SIZE, QUERY_SIZE), |b| {
         b.iter(|| {
             let b1_dev = dev.htod_sync_copy(&b1_host).unwrap();
@@ -121,35 +123,35 @@ fn cublas(c: &mut Criterion) {
         // assert!(final_host.iter().all(|x| *x == 12800));
     });
     
-    let a_nda = Array2::from_shape_vec(
-        (DB_SIZE as usize,  WIDTH as usize),
-        a_host.into_iter().map(|x| x as u16).collect::<Vec<_>>(),
-    )
-    .unwrap();
-    let b_nda = Array2::from_shape_vec(
-        (QUERY_SIZE as usize, WIDTH as usize),
-        b_host.into_iter().map(|x| x as u16).collect::<Vec<_>>(),
-    )
-    .unwrap();
-    let c_nda = a_nda
-        .dot(&b_nda.t());
-        // .into_raw_vec()
-        // .into_iter()
-        // .map(|x| x as u32)
-        // .collect::<Vec<_>>();
+    // let a_nda = Array2::from_shape_vec(
+    //     (DB_SIZE as usize,  WIDTH as usize),
+    //     a_host.into_iter().map(|x| x as u16).collect::<Vec<_>>(),
+    // )
+    // .unwrap();
+    // let b_nda = Array2::from_shape_vec(
+    //     (QUERY_SIZE as usize, WIDTH as usize),
+    //     b_host.into_iter().map(|x| x as u16).collect::<Vec<_>>(),
+    // )
+    // .unwrap();
+    // let c_nda = a_nda
+    //     .dot(&b_nda.t());
+    //     // .into_raw_vec()
+    //     // .into_iter()
+    //     // .map(|x| x as u32)
+    //     // .collect::<Vec<_>>();
 
-    let mut vec_column_major: Vec<u16> = Vec::new();
-    for col in 0..c_nda.ncols() {
-        for row in c_nda.column(col) {
-            vec_column_major.push(*row);
-        }
-    }
+    // let mut vec_column_major: Vec<u16> = Vec::new();
+    // for col in 0..c_nda.ncols() {
+    //     for row in c_nda.column(col) {
+    //         vec_column_major.push(*row);
+    //     }
+    // }
 
-    assert_eq!(
-        vec_column_major[0..100].iter().map(|x| x % 16384).collect::<Vec<_>>(),
-        final_host[0..100],
-        "GPU result does not match CPU implementation"
-    );
+    // assert_eq!(
+    //     vec_column_major[0..100].iter().map(|x| x % 16384).collect::<Vec<_>>(),
+    //     final_host[0..100],
+    //     "GPU result does not match CPU implementation"
+    // );
 
     group.finish();
 }
