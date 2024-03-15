@@ -64,6 +64,27 @@ extern \"C\" __global__ void matmul_p16(int* c, unsigned short* output, unsigned
 extern \"C\" __global__ void matmul_u32(int* c, unsigned int* output, unsigned int* a0Sums, unsigned int* a1Sums, int* b0Sums, int* b1Sums, size_t numRows, size_t numElements, size_t numCols, unsigned short _p) {
     matmul_u32_impl<unsigned int>(c, output, a0Sums, a1Sums, b0Sums, b1Sums, numRows, numElements, numCols, INT_MAX);
 }
+
+extern \"C\" __global__ void matmul_p15(int* c, unsigned short* output, unsigned int* a0Sums, unsigned int* a1Sums, int* b0Sums, int* b1Sums, size_t numRows, size_t numElements, size_t numCols, unsigned short p) {
+    size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx < numElements) {
+        
+        long long a0s = a0Sums[idx % numRows];
+        long long a1s = a1Sums[idx % numRows];
+
+        // Correct the sum to unsigned
+        long long b0s = b0Sums[idx / numRows] + numCols * 128;
+        long long b1s = b1Sums[idx / numRows] + numCols * 128;
+
+        // Correct the intermediate results to unsigned
+        long long c00 = c[idx] + ((a0s + b0s) << 7) - (numCols * 16384);
+        long long c11 = c[idx + numElements] + ((a1s + b1s) << 7) - (numCols * 16384);
+        long long tmp = c[idx + numElements * 2] + ((a0s + a1s + b1s + b0s) << 7) - (numCols * 16384);
+
+        // Calculate the u32 result and reduce
+        output[idx] = (c00 + ((tmp - c00 - c11) << 8) + (c11 << 16)) % 65536;
+    }
+}
 ";
 
 fn gemm(
@@ -102,11 +123,6 @@ fn gemm(
     }
 }
 
-// pub trait GPUDotEngine {
-//     fn create_database(&mut self, db_entries: &[u16], entry_size: usize, query_length: usize);
-//     fn dot(&self, query: &[u16]) -> &[u16];
-// }
-
 #[derive(PartialEq)]
 pub enum ComputeDataType {
     U14,
@@ -124,6 +140,7 @@ pub struct MatmulEngine<T> {
     dev: Arc<CudaDevice>,
     db1: CudaSlice<u8>,
     db0: CudaSlice<u8>,
+    db01: CudaSlice<u8>,
     db1_sums: CudaSlice<u32>,
     db0_sums: CudaSlice<u32>,
     query1_sums: CudaSlice<i32>,
@@ -161,6 +178,7 @@ where
             ComputeDataType::U16 => "matmul_u16",
             ComputeDataType::P16 => "matmul_p16",
             ComputeDataType::U32 => "matmul_u32",
+            ComputeDataType::P15 => "matmul_p15",
             _ => todo!(),
         };
 
@@ -192,6 +210,18 @@ where
             .iter_mut()
             .for_each(|x| (*x = (*x as i8 - 127 - 1) as u8));
 
+
+        let db01 = if data_type == ComputeDataType::P15 {
+            let a01_host: Vec<u8> = a1_host
+            .iter()
+            .zip(a0_host.iter())
+            .map(|(&a1, &a0)| a1 + a0)
+                .collect();
+            dev.htod_sync_copy(&a01_host).unwrap()
+        } else {
+            dev.htod_sync_copy(&[0u8;0]).unwrap()
+        };
+
         let db1 = dev.htod_sync_copy(&a1_host).unwrap();
         let db0 = dev.htod_sync_copy(&a0_host).unwrap();
         let db1_sums = dev.htod_sync_copy(&a1_sums).unwrap();
@@ -206,7 +236,7 @@ where
         let results: CudaSlice<T> = dev.alloc_zeros(db_length * query_length).unwrap();
 
         let intermediate_results_count = match data_type {
-            ComputeDataType::U16 => 3,
+            ComputeDataType::P15 | ComputeDataType::U16 => 3,
             ComputeDataType::P16 | ComputeDataType::U32 => 4,
             _ => todo!(),
         };
@@ -223,6 +253,7 @@ where
             dev,
             db1,
             db0,
+            db01,
             db1_sums,
             db0_sums,
             query1_sums,
@@ -237,10 +268,18 @@ where
     }
 
     pub fn dot(&mut self, query: &[u16]) -> Vec<T> {
-        let (b1, b0) = self.prepare_query(query);
+        let (b1, b0, b01) = if self.data_type == ComputeDataType::P15 {
+            let (b1, b0, b01) = self.prepare_query_karatsuba(query);
+            (b1, b0, Some(b01))
+        } else {
+            let (b1, b0) = self.prepare_query(query);
+            (b1, b0, None)
+        };
+        
         let b1_dev = self.dev.htod_sync_copy(&b1).unwrap();
         let b0_dev = self.dev.htod_sync_copy(&b0).unwrap();
 
+        // Calculate row sums for sign correction
         gemm(
             &self.blas.handle(),
             &b1_dev,
@@ -263,6 +302,7 @@ where
             self.entry_size as i32,
         );
 
+        // Calculate byte-wise products
         gemm(
             &self.blas.handle(),
             &self.db0,
@@ -273,39 +313,70 @@ where
             self.query_length as i32,
             self.entry_size as i32,
         );
-        gemm(
-            &self.blas.handle(),
-            &self.db0,
-            &b1_dev,
-            &mut self.intermediate_results,
-            (self.db_length * self.query_length * 4 * 1) as u64,
-            self.db_length as i32,
-            self.query_length as i32,
-            self.entry_size as i32,
-        );
-        gemm(
-            &self.blas.handle(),
-            &self.db1,
-            &b0_dev,
-            &mut self.intermediate_results,
-            (self.db_length * self.query_length * 4 * 2) as u64,
-            self.db_length as i32,
-            self.query_length as i32,
-            self.entry_size as i32,
-        );
 
-        // Additional matmul needed with high bytes for u32 output
-        if (self.data_type == ComputeDataType::P16) | (self.data_type == ComputeDataType::U32) {
+        if self.data_type == ComputeDataType::P15 {
+            // Use Karatsuba for P15
             gemm(
                 &self.blas.handle(),
                 &self.db1,
                 &b1_dev,
                 &mut self.intermediate_results,
-                (self.db_length * self.query_length * 4 * 3) as u64,
+                (self.db_length * self.query_length * 4 * 1) as u64,
                 self.db_length as i32,
                 self.query_length as i32,
                 self.entry_size as i32,
             );
+
+            let b01_dev = self.dev.htod_sync_copy(&b01.unwrap()).unwrap();
+
+            gemm(
+                &self.blas.handle(),
+                &self.db01,
+                &b01_dev,
+                &mut self.intermediate_results,
+                (self.db_length * self.query_length * 4 * 2) as u64,
+                self.db_length as i32,
+                self.query_length as i32,
+                self.entry_size as i32,
+            );
+
+        } else {
+            // Default byte-wise impl for the rest
+            gemm(
+                &self.blas.handle(),
+                &self.db0,
+                &b1_dev,
+                &mut self.intermediate_results,
+                (self.db_length * self.query_length * 4 * 1) as u64,
+                self.db_length as i32,
+                self.query_length as i32,
+                self.entry_size as i32,
+            );
+
+            gemm(
+                &self.blas.handle(),
+                &self.db1,
+                &b0_dev,
+                &mut self.intermediate_results,
+                (self.db_length * self.query_length * 4 * 2) as u64,
+                self.db_length as i32,
+                self.query_length as i32,
+                self.entry_size as i32,
+            );
+    
+            // Additional matmul needed with high bytes for u32
+            if (self.data_type == ComputeDataType::P16) | (self.data_type == ComputeDataType::U32) {
+                gemm(
+                    &self.blas.handle(),
+                    &self.db1,
+                    &b1_dev,
+                    &mut self.intermediate_results,
+                    (self.db_length * self.query_length * 4 * 3) as u64,
+                    self.db_length as i32,
+                    self.query_length as i32,
+                    self.entry_size as i32,
+                );
+            }
         }
 
         let num_elements = self.db_length * self.query_length;
@@ -354,6 +425,22 @@ where
         }
 
         (b1, b0)
+    }
+
+    pub fn prepare_query_karatsuba(&self, query: &[u16]) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
+        let mut b1 = vec![0u8; query.len()];
+        let mut b0 = vec![0u8; query.len()];
+        let mut b01 = vec![0u8; query.len()];
+
+        for i in 0..query.len() {
+            let tmp_1 = query[i] >> 8;
+            let tmp_0 = query[i] & 0xFF;
+            b1[i] = (tmp_1 as i8 - 127 - 1) as u8;
+            b0[i] = (tmp_0 as i8 - 127 - 1) as u8;
+            b01[i] = ((tmp_1 + tmp_0) as i8 - 127 - 1) as u8;
+        }
+
+        (b1, b0, b01)
     }
 }
 
@@ -484,6 +571,50 @@ mod tests {
         for col in 0..c_nda.ncols() {
             for row in c_nda.column(col) {
                 vec_column_major.push(*row as u32);
+            }
+        }
+
+        assert_eq!(
+            vec_column_major,
+            gpu_result,
+            "GPU result does not match CPU implementation"
+        );
+    }
+
+    #[test]
+    /// p15 x p15 → p15
+    fn check_p15() {
+        let mut rng = StdRng::seed_from_u64(RNG_SEED);
+        const P: u16 = (1 << 15) - 19;
+
+        let db = (0..DB_SIZE * WIDTH)
+            .map(|_| 1)
+            .collect::<Vec<_>>();
+
+        let query = (0..QUERY_SIZE * WIDTH)
+            .map(|_| 1)
+            .collect::<Vec<_>>();
+
+        let mut engine =
+            MatmulEngine::<u16>::create(&db, WIDTH, QUERY_SIZE, ComputeDataType::P15, Some(P));
+        let gpu_result = engine.dot(&query);
+
+        let a_nda = Array2::from_shape_vec(
+            (DB_SIZE as usize, WIDTH as usize),
+            db.into_iter().map(|x| x as u64).collect::<Vec<_>>(),
+        )
+        .unwrap();
+        let b_nda = Array2::from_shape_vec(
+            (QUERY_SIZE as usize, WIDTH as usize),
+            query.into_iter().map(|x| x as u64).collect::<Vec<_>>(),
+        )
+        .unwrap();
+        let c_nda = a_nda.dot(&b_nda.t());
+
+        let mut vec_column_major: Vec<u16> = Vec::new();
+        for col in 0..c_nda.ncols() {
+            for row in c_nda.column(col) {
+                vec_column_major.push((*row % (P as u64)) as u16);
             }
         }
 
