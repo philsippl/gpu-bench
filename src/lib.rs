@@ -9,65 +9,60 @@ use cudarc::{
 };
 use num_traits::FromPrimitive;
 
-const PTX_SRC_U16U16U16: &str = "
-extern \"C\" __global__ void dot_u16(int* c, unsigned short* output, unsigned int* a0Sums, unsigned int* a1Sums, int* b0Sums, int* b1Sums, size_t numRows, size_t numElements, size_t numCols, unsigned short p) {
+const PTX_SRC: &str = "
+const long long INT_MAX = 4294967296;
+
+/// Perform multiplication of two u16 in u16 ring 
+extern \"C\" __global__ void matmul_u16(int* c, unsigned short* output, unsigned int* a0Sums, unsigned int* a1Sums, int* b0Sums, int* b1Sums, size_t numRows, size_t numElements, size_t numCols, unsigned short _p) {
     size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx < numElements) {
         unsigned int a0s = a0Sums[idx % numRows];
         unsigned int a1s = a1Sums[idx % numRows];
+
+        // Correct the sum to unsigned
         unsigned int b0s = b0Sums[idx / numRows] + numCols * 128;
         unsigned int b1s = b1Sums[idx / numRows] + numCols * 128;
 
-        // Correct the results to simulate u8
-        unsigned short c00 = c[idx];
-        c00 += (a0s + b0s) << 7;
-
-        unsigned short c01 = c[idx + numElements];
-        c01 += (a0s + b1s) << 7;
-
-        unsigned short c10 = c[idx + numElements * 2];
-        c10 += (a1s + b0s) << 7;
+        // Correct the intermediate results to unsigned
+        unsigned short c00 = c[idx] + ((a0s + b0s) << 7);
+        unsigned short c01 = c[idx + numElements] + ((a0s + b1s) << 7);
+        unsigned short c10 = c[idx + numElements * 2] + ((a1s + b0s) << 7);
 
         // Calculate the u16 result
         output[idx] = c00 + ((c01 + c10) << 8);
     }
 }
-";
 
-const PTX_SRC_U16U16U32: &str = "
-extern \"C\" __global__ void dot_p16(int* c, unsigned short* output, unsigned int* a0Sums, unsigned int* a1Sums, int* b0Sums, int* b1Sums, size_t numRows, size_t numElements, size_t numCols, unsigned short p) {
+template<typename T>
+__global__ void matmul_u32_impl(int* c, T* output, unsigned int* a0Sums, unsigned int* a1Sums, int* b0Sums, int* b1Sums, size_t numRows, size_t numElements, size_t numCols, long long p) {
     size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx < numElements) {
         long long a0s = a0Sums[idx % numRows];
         long long a1s = a1Sums[idx % numRows];
+
+        // Correct the sum to unsigned
         long long b0s = b0Sums[idx / numRows] + numCols * 128;
         long long b1s = b1Sums[idx / numRows] + numCols * 128;
 
-        // Correct the results to simulate u8
-        long long c00 = c[idx];
-        long long tmp00 = c00 + ((a0s + b0s) << 7) - 209715200;
-        // c00 += ((a0s + b0s) << 7);
-        // c00 -= 209715200;
+        // Correct the intermediate results to unsigned
+        long long c00 = c[idx] + ((a0s + b0s) << 7) - (numCols * 16384);
+        long long c01 = c[idx + numElements] + ((a0s + b1s) << 7) - (numCols * 16384);
+        long long c10 = c[idx + numElements * 2] + ((a1s + b0s) << 7) - (numCols * 16384);
+        long long c11 = c[idx + numElements * 3] + ((a1s + b1s) << 7) - (numCols * 16384);
 
-        long long c01 = c[idx + numElements];
-        long long tmp01 = c01 + ((a0s + b1s) << 7) - 209715200;
-        // c01 += ((a0s + b1s) << 7);
-        // c01 -= 209715200;
-
-        long long c10 = c[idx + numElements * 2];
-        long long tmp10 = c10 + ((a1s + b0s) << 7) - 209715200;
-        // c10 += ((a1s + b0s) << 7);
-        // c10 -= 209715200;
-
-        long long c11 = c[idx + numElements * 3];
-        long long tmp11 = c11 + ((a1s + b1s) << 7) - 209715200;
-        // c11 += ((a1s + b1s) << 7);
-        // c11 -= 209715200;
-
-        // Calculate the u32 result
-        unsigned long long tmp = (tmp00 + ((tmp01 + tmp10) << 8) + (tmp11 << 16));
-        output[idx] = tmp % 65529;
+        // Calculate the u32 result and reduce
+        output[idx] = (c00 + ((c01 + c10) << 8) + (c11 << 16)) % p;
     }
+}
+
+/// Perform multiplication in 16bit finite field 
+extern \"C\" __global__ void matmul_p16(int* c, unsigned short* output, unsigned int* a0Sums, unsigned int* a1Sums, int* b0Sums, int* b1Sums, size_t numRows, size_t numElements, size_t numCols, unsigned short p) {
+    matmul_u32_impl<unsigned short>(c, output, a0Sums, a1Sums, b0Sums, b1Sums, numRows, numElements, numCols, static_cast<long long>(p));
+}
+
+/// Perform multiplication of two u16 in u32 ring
+extern \"C\" __global__ void matmul_u32(int* c, unsigned int* output, unsigned int* a0Sums, unsigned int* a1Sums, int* b0Sums, int* b1Sums, size_t numRows, size_t numElements, size_t numCols, unsigned short _p) {
+    matmul_u32_impl<unsigned int>(c, output, a0Sums, a1Sums, b0Sums, b1Sums, numRows, numElements, numCols, INT_MAX);
 }
 ";
 
@@ -116,6 +111,7 @@ fn gemm(
 pub enum ComputeDataType {
     U14,
     U16,
+    U32,
     P15,
     P16,
 }
@@ -161,13 +157,14 @@ where
         let dev = CudaDevice::new(0).unwrap();
         let blas = CudaBlas::new(dev.clone()).unwrap();
 
-        let (ptx_src, function_name) = match data_type {
-            ComputeDataType::U16 => (PTX_SRC_U16U16U16, "dot_u16"),
-            ComputeDataType::P16 => (PTX_SRC_U16U16U32, "dot_p16"),
+        let function_name = match data_type {
+            ComputeDataType::U16 => "matmul_u16",
+            ComputeDataType::P16 => "matmul_p16",
+            ComputeDataType::U32 => "matmul_u32",
             _ => todo!(),
         };
 
-        let ptx = compile_ptx(ptx_src).unwrap();
+        let ptx = compile_ptx(PTX_SRC).unwrap();
         dev.load_ptx(ptx, function_name, &[function_name]).unwrap();
         let function = dev.get_func(function_name, function_name).unwrap();
 
@@ -210,7 +207,7 @@ where
 
         let intermediate_results_count = match data_type {
             ComputeDataType::U16 => 3,
-            ComputeDataType::P16 => 4,
+            ComputeDataType::P16 | ComputeDataType::U32 => 4,
             _ => todo!(),
         };
 
@@ -298,7 +295,7 @@ where
         );
 
         // Additional matmul needed with high bytes for u32 output
-        if self.data_type == ComputeDataType::P16 {
+        if (self.data_type == ComputeDataType::P16) | (self.data_type == ComputeDataType::U32) {
             gemm(
                 &self.blas.handle(),
                 &self.db1,
@@ -366,15 +363,14 @@ mod tests {
     use rand::{rngs::StdRng, Rng, SeedableRng};
 
     use crate::{ComputeDataType, MatmulEngine};
+    const WIDTH: usize = 12_800;
+    const QUERY_SIZE: usize = 31;
+    const DB_SIZE: usize = 1000;
+    const RNG_SEED: u64 = 40;
 
     #[test]
     /// u16 x u16 → u16
     fn check_u16() {
-        const WIDTH: usize = 12_800;
-        const QUERY_SIZE: usize = 31;
-        const DB_SIZE: usize = 1000;
-        const RNG_SEED: u64 = 40;
-
         let mut rng = StdRng::seed_from_u64(RNG_SEED);
         let db = (0..DB_SIZE * WIDTH)
             .map(|_| rng.gen::<u16>())
@@ -384,7 +380,8 @@ mod tests {
             .map(|_| rng.gen::<u16>())
             .collect::<Vec<_>>();
 
-        let mut engine = MatmulEngine::<u16>::create(&db, WIDTH, QUERY_SIZE, ComputeDataType::U16, None);
+        let mut engine =
+            MatmulEngine::<u16>::create(&db, WIDTH, QUERY_SIZE, ComputeDataType::U16, None);
         let gpu_result = engine.dot(&query);
 
         let a_nda = Array2::from_shape_vec(
@@ -415,19 +412,15 @@ mod tests {
     #[test]
     /// p16 x p16 → p16
     fn check_p16() {
-        const WIDTH: usize = 12_800;
-        const QUERY_SIZE: usize = 31;
-        const DB_SIZE: usize = 1000;
-        const RNG_SEED: u64 = 40;
-        const P: u16 = 65529;
+        const P: u16 = ((1u32 << 16) - 17) as u16;
 
         let mut rng = StdRng::seed_from_u64(RNG_SEED);
         let db = (0..DB_SIZE * WIDTH)
-            .map(|_| rng.gen::<u16>())
+            .map(|_| rng.gen_range(0..P))
             .collect::<Vec<_>>();
 
         let query = (0..QUERY_SIZE * WIDTH)
-            .map(|_| rng.gen::<u16>())
+            .map(|_| rng.gen_range(0..P))
             .collect::<Vec<_>>();
 
         let mut engine =
@@ -450,6 +443,47 @@ mod tests {
         for col in 0..c_nda.ncols() {
             for row in c_nda.column(col) {
                 vec_column_major.push((*row % (P as u64)) as u16);
+            }
+        }
+
+        assert_eq!(
+            vec_column_major, gpu_result,
+            "GPU result does not match CPU implementation"
+        );
+    }
+
+    #[test]
+    /// u16 x u16 → u32
+    fn check_u32() {
+        let mut rng = StdRng::seed_from_u64(RNG_SEED);
+        let db = (0..DB_SIZE * WIDTH)
+            .map(|_| rng.gen::<u16>())
+            .collect::<Vec<_>>();
+
+        let query = (0..QUERY_SIZE * WIDTH)
+            .map(|_| rng.gen::<u16>())
+            .collect::<Vec<_>>();
+
+        let mut engine =
+            MatmulEngine::<u32>::create(&db, WIDTH, QUERY_SIZE, ComputeDataType::U32, None);
+        let gpu_result = engine.dot(&query);
+
+        let a_nda = Array2::from_shape_vec(
+            (DB_SIZE as usize, WIDTH as usize),
+            db.into_iter().map(|x| x as u64).collect::<Vec<_>>(),
+        )
+        .unwrap();
+        let b_nda = Array2::from_shape_vec(
+            (QUERY_SIZE as usize, WIDTH as usize),
+            query.into_iter().map(|x| x as u64).collect::<Vec<_>>(),
+        )
+        .unwrap();
+        let c_nda = a_nda.dot(&b_nda.t());
+
+        let mut vec_column_major: Vec<u32> = Vec::new();
+        for col in 0..c_nda.ncols() {
+            for row in c_nda.column(col) {
+                vec_column_major.push(*row as u32);
             }
         }
 
