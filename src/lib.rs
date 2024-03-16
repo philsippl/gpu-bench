@@ -95,7 +95,7 @@ extern \"C\" __global__ void matmul_u14(unsigned int* c, unsigned short* output,
 }
 ";
 
-fn gemm(
+pub fn gemm(
     handle: &sys::cublasHandle_t,
     a: &CudaSlice<u8>,
     b: &CudaSlice<u8>,
@@ -493,10 +493,11 @@ where
 }
 
 #[cfg(test)]
+/// Sanity checks for correctness
 mod tests {
     use ndarray::Array2;
     use num_traits::FromPrimitive;
-    use rand::{distributions::{Distribution, Standard}, rngs::StdRng, Rng, SeedableRng};
+    use rand::{rngs::StdRng, Rng, SeedableRng};
 
     use crate::{ComputeDataType, MatmulEngine};
     const WIDTH: usize = 12_800;
