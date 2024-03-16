@@ -1,10 +1,12 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion, Throughput};
+use cudarc::driver::CudaDevice;
 use gpu_bench::{ComputeDataType, MatmulEngine};
 use rand::{rngs::StdRng, Rng, SeedableRng};
+use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 
 const WIDTH: usize = 12_800;
-const QUERY_SIZE: usize = 31;
-const DB_SIZE: usize = 1000;
+const QUERY_SIZE: usize = 310;
+const DB_SIZE: usize = 10_000;
 const RNG_SEED: u64 = 40;
 
 fn bench_u16(c: &mut Criterion) {
@@ -61,7 +63,7 @@ fn bench_p16(c: &mut Criterion) {
 }
 
 fn bench_u32(c: &mut Criterion) {
-    let mut group = c.benchmark_group("bench_p16");
+    let mut group = c.benchmark_group("bench_u32");
     let mut rng = StdRng::seed_from_u64(RNG_SEED);
 
     let db = (0..DB_SIZE * WIDTH)
@@ -87,7 +89,7 @@ fn bench_u32(c: &mut Criterion) {
 }
 
 fn bench_p14(c: &mut Criterion) {
-    let mut group = c.benchmark_group("bench_p16");
+    let mut group = c.benchmark_group("bench_p14");
     let mut rng = StdRng::seed_from_u64(RNG_SEED);
     const P: u16 = (1 << 14) - 3;
 

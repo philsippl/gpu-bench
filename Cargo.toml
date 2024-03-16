@@ -28,30 +28,14 @@ lto = "fat"
 codegen-units = 1
 debug = true
 
-#[[bench]]
-#name = "custom_kernel"
-#harness = false
+[[bench]]
+name = "engines"
+harness = false
 
-#[[bench]]
-#name = "custom_kernel_triton"
-#harness = false
-
-#[[bench]]
-#name = "cublas"
-#harness = false
-
-#[[bench]]
-#name = "custom_kernel_2d"
-#harness = false
+[[bench]]
+name = "basics"
+harness = false
 
 #[[bench]]
 #name = "cublas_u14"
 #harness = false
-
-#[[bench]]
-#name = "cublas_u16"
-#harness = false
-
-[[bench]]
-name = "engines"
-harness = false
