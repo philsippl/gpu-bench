@@ -36,7 +36,7 @@ fn bench_u16(c: &mut Criterion) {
 fn bench_p16(c: &mut Criterion) {
     let mut group = c.benchmark_group("bench_p16");
     let mut rng = StdRng::seed_from_u64(RNG_SEED);
-    const P: u16 = (1 << 16) - 7;
+    const P: u16 = 65529; // (1 << 16) - 7
 
     let db = (0..DB_SIZE * WIDTH)
         .map(|_| rng.gen_range(0..P))
@@ -77,7 +77,7 @@ fn bench_u32(c: &mut Criterion) {
         MatmulEngine::<u32>::create(&db, WIDTH, QUERY_SIZE, ComputeDataType::U32, None);
 
     group.bench_function(
-        format!("u16 x u16 → u32 ({} x {})", DB_SIZE, QUERY_SIZE),
+        format!("u32 x u32 → u32 ({} x {})", DB_SIZE, QUERY_SIZE),
         |b| {
             b.iter(|| {
                 black_box(engine.dot(&query));
@@ -86,10 +86,10 @@ fn bench_u32(c: &mut Criterion) {
     );
 }
 
-fn bench_p15(c: &mut Criterion) {
+fn bench_p14(c: &mut Criterion) {
     let mut group = c.benchmark_group("bench_p16");
     let mut rng = StdRng::seed_from_u64(RNG_SEED);
-    const P: u16 = (1 << 15) - 19;
+    const P: u16 = (1 << 14) - 3;
 
     let db = (0..DB_SIZE * WIDTH)
         .map(|_| rng.gen_range(0..P))
@@ -101,10 +101,10 @@ fn bench_p15(c: &mut Criterion) {
 
     group.throughput(Throughput::Elements((DB_SIZE * QUERY_SIZE / 31) as u64));
     let mut engine =
-        MatmulEngine::<u16>::create(&db, WIDTH, QUERY_SIZE, ComputeDataType::P15, None);
+        MatmulEngine::<u16>::create(&db, WIDTH, QUERY_SIZE, ComputeDataType::P14, Some(P));
 
     group.bench_function(
-        format!("u16 x u16 → u32 ({} x {})", DB_SIZE, QUERY_SIZE),
+        format!("p14 x p14 → p14 ({} x {})", DB_SIZE, QUERY_SIZE),
         |b| {
             b.iter(|| {
                 black_box(engine.dot(&query));
@@ -113,5 +113,31 @@ fn bench_p15(c: &mut Criterion) {
     );
 }
 
-criterion_group!(benches, bench_u16, bench_p16, bench_u32);
+fn bench_u14(c: &mut Criterion) {
+    let mut group = c.benchmark_group("bench_u14");
+    let mut rng = StdRng::seed_from_u64(RNG_SEED);
+
+    let db = (0..DB_SIZE * WIDTH)
+        .map(|_| rng.gen_range(0..(1 << 14)))
+        .collect::<Vec<_>>();
+
+    let query = (0..QUERY_SIZE * WIDTH)
+        .map(|_| rng.gen_range(0..(1 << 14)))
+        .collect::<Vec<_>>();
+
+    group.throughput(Throughput::Elements((DB_SIZE * QUERY_SIZE / 31) as u64));
+    let mut engine =
+        MatmulEngine::<u16>::create(&db, WIDTH, QUERY_SIZE, ComputeDataType::U14, None);
+
+    group.bench_function(
+        format!("u14 x u14 → u14 ({} x {})", DB_SIZE, QUERY_SIZE),
+        |b| {
+            b.iter(|| {
+                black_box(engine.dot(&query));
+            });
+        },
+    );
+}
+
+criterion_group!(benches, bench_u16, bench_p16, bench_u32, bench_p14, bench_u14);
 criterion_main!(benches);
