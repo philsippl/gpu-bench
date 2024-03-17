@@ -6,7 +6,7 @@ use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 
 const WIDTH: usize = 12_800;
 const QUERY_SIZE: usize = 310;
-const DB_SIZE: usize = 10_000;
+const DB_SIZE: usize = 200_000;
 const RNG_SEED: u64 = 40;
 
 fn bench_u16(c: &mut Criterion) {
@@ -142,4 +142,5 @@ fn bench_u14(c: &mut Criterion) {
 }
 
 criterion_group!(benches, bench_u16, bench_p16, bench_u32, bench_p14, bench_u14);
+// criterion_group!(benches, bench_p14);
 criterion_main!(benches);

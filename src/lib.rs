@@ -629,8 +629,8 @@ mod tests {
         }
 
         assert_eq!(
-            vec_column_major[0..10],
-            gpu_result[0..10],
+            vec_column_major,
+            gpu_result,
             "GPU result does not match CPU implementation"
         );
     }
@@ -657,8 +657,8 @@ mod tests {
         }
 
         assert_eq!(
-            vec_column_major[0..10],
-            gpu_result[0..10],
+            vec_column_major,
+            gpu_result,
             "GPU result does not match CPU implementation"
         );
     }

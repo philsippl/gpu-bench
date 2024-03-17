@@ -12,7 +12,7 @@ fn bench_decomposition(c: &mut Criterion) {
     let mut group = c.benchmark_group("bench_decomposition");
     let mut rng = StdRng::seed_from_u64(RNG_SEED);
 
-    for query_size in [1, 5, 10, 20, 30, 40, 5, 100] {
+    for query_size in [1, 5, 10, 20, 30, 40, 50, 100] {
         let query = (0..query_size * 31 * WIDTH)
             .map(|_| rng.gen::<u16>())
             .collect::<Vec<_>>();
@@ -51,7 +51,7 @@ fn bench_memcpy(c: &mut Criterion) {
     let mut rng = StdRng::seed_from_u64(RNG_SEED);
     let dev = CudaDevice::new(0).unwrap();
 
-    for query_size in [1, 5, 10, 20, 30, 40, 5, 100] {
+    for query_size in [1, 5, 10, 20, 30, 40, 50, 100] {
         let query = (0..query_size * 31 * WIDTH)
             .map(|_| rng.gen::<u16>())
             .collect::<Vec<_>>();
@@ -94,7 +94,6 @@ fn bench_rowsum(c: &mut Criterion) {
         let mut query1_sums: CudaSlice<i32> = dev.alloc_zeros(query_size).unwrap();
         let ones = vec![1u8; WIDTH];
         let ones = dev.htod_sync_copy(&ones).unwrap();
-        let mut results = vec![1i32; query_size];
 
         group.bench_function(format!("rowsum cuBLAS ({} x {})", query_size, WIDTH), |b| {
             b.iter(|| {
@@ -156,7 +155,6 @@ fn bench_gemm(c: &mut Criterion) {
                     );
 
                     dev.synchronize().unwrap();
-
                 });
             });
         }
