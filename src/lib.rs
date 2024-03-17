@@ -154,9 +154,6 @@ pub struct MatmulEngine<T> {
     db0_sums: CudaSlice<u32>,
     query1_sums: CudaSlice<i32>,
     query0_sums: CudaSlice<i32>,
-    query1: Vec<u8>,
-    query0: Vec<u8>,
-    query01: Vec<u8>,
     ones: CudaSlice<u8>,
     intermediate_results: CudaSlice<i32>,
     results: CudaSlice<T>,
@@ -285,29 +282,27 @@ where
             data_type,
             intermediate_results,
             p: p.unwrap_or(0),
-            query1: vec![],
-            query0: vec![],
-            query01: vec![],
         }
     }
 
-    pub fn preprocess_query(&mut self, query: &[u16]) {
-        match self.data_type {
+    pub fn dot(&mut self, query: &[u16]) -> Vec<T> {
+        let (b1, b0, b01) = match self.data_type {
             ComputeDataType::P14 => {
-                (self.query1, self.query0, self.query01) = self.prepare_query_karatsuba(query);
+                let (b1, b0, b01) = self.prepare_query_karatsuba(query);
+                (b1, b0, Some(b01))
             }
             ComputeDataType::U14 => {
-                (self.query1, self.query0) = self.prepare_query_u14(query);
+                let (b1, b0) = self.prepare_query_u14(query);
+                (b1, b0, None)
             }
             _ => {
-                (self.query1, self.query0) = self.prepare_query(query);
+                let (b1, b0) = self.prepare_query(query);
+                (b1, b0, None)
             }
         };
-    }
 
-    pub fn dot(&mut self) -> Vec<T> {
-        let b1_dev = self.dev.htod_sync_copy(&self.query1).unwrap();
-        let b0_dev = self.dev.htod_sync_copy(&self.query0).unwrap();
+        let b1_dev = self.dev.htod_sync_copy(&b1).unwrap();
+        let b0_dev = self.dev.htod_sync_copy(&b0).unwrap();
 
         // Calculate row sums for sign correction
         if self.data_type != ComputeDataType::U14 {
@@ -359,7 +354,7 @@ where
                 self.entry_size,
             );
 
-            let b01_dev = self.dev.htod_sync_copy(&self.query01).unwrap();
+            let b01_dev = self.dev.htod_sync_copy(&b01.unwrap()).unwrap();
 
             gemm(
                 &self.blas.handle(),
@@ -539,9 +534,7 @@ mod tests {
 
         let mut engine =
             MatmulEngine::<u16>::create(&db, WIDTH, QUERY_SIZE, ComputeDataType::U16, None);
-
-        engine.preprocess_query(&query);
-        let gpu_result = engine.dot();
+        let gpu_result = engine.dot(&query);
 
         let a_nda = random_ndarray::<u16>(db, DB_SIZE, WIDTH);
         let b_nda = random_ndarray::<u16>(query, QUERY_SIZE, WIDTH);
@@ -570,8 +563,7 @@ mod tests {
 
         let mut engine =
             MatmulEngine::<u16>::create(&db, WIDTH, QUERY_SIZE, ComputeDataType::P16, Some(P));
-        engine.preprocess_query(&query);
-        let gpu_result = engine.dot();
+        let gpu_result = engine.dot(&query);
 
         let a_nda = random_ndarray::<u64>(db, DB_SIZE, WIDTH);
         let b_nda = random_ndarray::<u64>(query, QUERY_SIZE, WIDTH);
@@ -598,8 +590,7 @@ mod tests {
 
         let mut engine =
             MatmulEngine::<u32>::create(&db, WIDTH, QUERY_SIZE, ComputeDataType::U32, None);
-        engine.preprocess_query(&query);
-        let gpu_result = engine.dot();
+        let gpu_result = engine.dot(&query);
 
         let a_nda = random_ndarray::<u64>(db, DB_SIZE, WIDTH);
         let b_nda = random_ndarray::<u64>(query, QUERY_SIZE, WIDTH);
@@ -628,8 +619,7 @@ mod tests {
 
         let mut engine =
             MatmulEngine::<u16>::create(&db, WIDTH, QUERY_SIZE, ComputeDataType::P14, Some(P));
-        engine.preprocess_query(&query);
-        let gpu_result = engine.dot();
+        let gpu_result = engine.dot(&query);
 
         let a_nda = random_ndarray::<u64>(db, DB_SIZE, WIDTH);
         let b_nda = random_ndarray::<u64>(query, QUERY_SIZE, WIDTH);
@@ -656,8 +646,7 @@ mod tests {
 
         let mut engine =
             MatmulEngine::<u16>::create(&db, WIDTH, QUERY_SIZE, ComputeDataType::U14, None);
-        engine.preprocess_query(&query);
-        let gpu_result = engine.dot();
+        let gpu_result = engine.dot(&query);
 
         let a_nda = random_ndarray::<u16>(db, DB_SIZE, WIDTH);
         let b_nda = random_ndarray::<u16>(query, QUERY_SIZE, WIDTH);
