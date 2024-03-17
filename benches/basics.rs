@@ -80,15 +80,15 @@ fn bench_rowsum(c: &mut Criterion) {
             .collect::<Vec<_>>();
 
         group.throughput(Throughput::Elements((query_size / 31) as u64));
-        // group.bench_function(format!("rowsum CPU ({} x {})", query_size, WIDTH), |b| {
-        //     b.iter(|| {
-        //         let sums: Vec<u32> = query
-        //             .par_chunks(WIDTH)
-        //             .map(|row| row.iter().map(|&x| x as u32).sum())
-        //             .collect();
-        //         black_box(sums);
-        //     });
-        // });
+        group.bench_function(format!("rowsum CPU ({} x {})", query_size, WIDTH), |b| {
+            b.iter(|| {
+                let sums: Vec<u32> = query
+                    .par_chunks(WIDTH)
+                    .map(|row| row.iter().map(|&x| x as u32).sum())
+                    .collect();
+                black_box(sums);
+            });
+        });
 
         let b1_dev = dev.htod_sync_copy(&query).unwrap();
         let mut query1_sums: CudaSlice<i32> = dev.alloc_zeros(query_size).unwrap();
@@ -110,13 +110,58 @@ fn bench_rowsum(c: &mut Criterion) {
                 );
 
                 // Make very sure this is not async
-                dev
-                    .dtoh_sync_copy_into(&query1_sums, &mut results)
-                    .unwrap();
+                dev.synchronize().unwrap();
             });
         });
     }
 }
 
-criterion_group!(benches, bench_rowsum, bench_memcpy, bench_decomposition);
+fn bench_gemm(c: &mut Criterion) {
+    let mut group = c.benchmark_group("bench_gemm");
+    let mut rng = StdRng::seed_from_u64(RNG_SEED);
+    let dev = CudaDevice::new(0).unwrap();
+    let blas = CudaBlas::new(dev.clone()).unwrap();
+    const DB_SIZE: usize = 100_000;
+
+    let db = (0..DB_SIZE * WIDTH)
+        .map(|_| rng.gen::<u8>())
+        .collect::<Vec<_>>();
+
+    let db_dev = dev.htod_sync_copy(&db).unwrap();
+
+    for query_size in [50, 100, 1000, 10_000, 50_000] {
+        let query = (0..query_size * WIDTH)
+            .map(|_| rng.gen::<u8>())
+            .collect::<Vec<_>>();
+        let b1_dev = dev.htod_sync_copy(&query).unwrap();
+        let mut result: CudaSlice<i32> = dev.alloc_zeros(DB_SIZE * query_size).unwrap();
+
+        for tp in vec![
+            Throughput::Elements((DB_SIZE * query_size * WIDTH * 2) as u64),
+            Throughput::Bytes(((DB_SIZE + query_size) * WIDTH) as u64),
+        ] {
+            group.throughput(tp);
+
+            group.bench_function(format!("gemm cuBLAS ({} x {})", DB_SIZE, query_size), |b| {
+                b.iter(|| {
+                    gpu_bench::gemm(
+                        &blas.handle(),
+                        &db_dev,
+                        &b1_dev,
+                        &mut result,
+                        0,
+                        DB_SIZE,
+                        query_size,
+                        WIDTH,
+                    );
+
+                    dev.synchronize().unwrap();
+
+                });
+            });
+        }
+    }
+}
+
+criterion_group!(benches, bench_rowsum, bench_memcpy, bench_decomposition, bench_gemm);
 criterion_main!(benches);

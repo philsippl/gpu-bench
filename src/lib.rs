@@ -341,7 +341,7 @@ where
         );
 
         if self.data_type == ComputeDataType::P14 {
-            // Use Karatsuba for P15
+            // Use Karatsuba for P14
             gemm(
                 &self.blas.handle(),
                 &self.db1,
