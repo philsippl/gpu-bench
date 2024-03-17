@@ -8,7 +8,6 @@ use cudarc::{
     nvrtc::compile_ptx,
 };
 use num_traits::FromPrimitive;
-use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 
 const PTX_SRC: &str = "
 const long long INT_MAX = 4294967296;
@@ -453,39 +452,41 @@ where
     }
 
     pub fn prepare_query(&self, query: &[u16]) -> (Vec<u8>, Vec<u8>) {
-        query
-            .par_iter()
-            .map(|&x| {
-                (
-                    ((x >> 8) as i32 - 128) as u8,
-                    ((x & 0xFF) as i32 - 128) as u8,
-                )
-            })
-            .collect::<(Vec<_>, Vec<_>)>()
+        let mut b1 = vec![0u8; query.len()];
+        let mut b0 = vec![0u8; query.len()];
+
+        for i in 0..query.len() {
+            b1[i] = ((query[i] >> 8) as i32 - 128) as u8;
+            b0[i] = ((query[i] & 0xFF) as i32 - 128) as u8;
+        }
+
+        (b1, b0)
     }
 
     pub fn prepare_query_u14(&self, query: &[u16]) -> (Vec<u8>, Vec<u8>) {
-        query
-            .par_iter()
-            .map(|&x| ((x >> 7) as u8, (x & 0x7F) as u8))
-            .collect::<(Vec<_>, Vec<_>)>()
+        let mut b1 = vec![0u8; query.len()];
+        let mut b0 = vec![0u8; query.len()];
+
+        for i in 0..query.len() {
+            b1[i] = (query[i] >> 7) as u8;
+            b0[i] = (query[i] & 0x7F) as u8;
+        }
+
+        (b1, b0)
     }
 
     pub fn prepare_query_karatsuba(&self, query: &[u16]) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
-        let (b1, (b0, b01)): (Vec<u8>, (Vec<u8>, Vec<u8>)) = query
-            .par_iter()
-            .map(|&x| {
-                let tmp_1 = x >> 7;
-                let tmp_0 = x & 0x7F;
-                (
-                    (tmp_1 as i8 - 127 - 1) as u8,
-                    (
-                        (tmp_0 as i8 - 127 - 1) as u8,
-                        ((tmp_1 + tmp_0) as i8 - 127 - 1) as u8,
-                    ),
-                )
-            })
-            .collect::<(Vec<_>, (Vec<_>, Vec<_>))>();
+        let mut b1 = vec![0u8; query.len()];
+        let mut b0 = vec![0u8; query.len()];
+        let mut b01 = vec![0u8; query.len()];
+
+        for i in 0..query.len() {
+            let tmp_1 = query[i] >> 7;
+            let tmp_0 = query[i] & 0x7F;
+            b1[i] = (tmp_1 as i8 - 127 - 1) as u8;
+            b0[i] = (tmp_0 as i8 - 127 - 1) as u8;
+            b01[i] = ((tmp_1 + tmp_0) as i8 - 127 - 1) as u8;
+        }
 
         (b1, b0, b01)
     }
@@ -504,17 +505,12 @@ mod tests {
     const DB_SIZE: usize = 1000;
     const RNG_SEED: u64 = 40;
 
+
     /// Helpers
-    fn random_ndarray<T>(array: Vec<u16>, n: usize, m: usize) -> Array2<T>
-    where
-        T: FromPrimitive,
-    {
+    fn random_ndarray<T>(array: Vec<u16>, n: usize, m: usize) -> Array2<T> where T: FromPrimitive {
         Array2::from_shape_vec(
             (n as usize, m as usize),
-            array
-                .into_iter()
-                .map(|x| T::from_u16(x).unwrap())
-                .collect::<Vec<_>>(),
+            array.into_iter().map(|x| T::from_u16(x).unwrap()).collect::<Vec<_>>(),
         )
         .unwrap()
     }
@@ -529,8 +525,8 @@ mod tests {
     #[test]
     /// u16 x u16 → u16
     fn check_u16() {
-        let db = random_vec(DB_SIZE, WIDTH, 1 << 16);
-        let query = random_vec(QUERY_SIZE, WIDTH, 1 << 16);
+        let db = random_vec(DB_SIZE, WIDTH, 1<<16);
+        let query = random_vec(QUERY_SIZE, WIDTH, 1<<16);
 
         let mut engine =
             MatmulEngine::<u16>::create(&db, WIDTH, QUERY_SIZE, ComputeDataType::U16, None);
@@ -585,8 +581,8 @@ mod tests {
     #[test]
     /// u16 x u16 → u32
     fn check_u32() {
-        let db = random_vec(DB_SIZE, WIDTH, 1 << 16);
-        let query = random_vec(QUERY_SIZE, WIDTH, 1 << 16);
+        let db = random_vec(DB_SIZE, WIDTH, 1<<16);
+        let query = random_vec(QUERY_SIZE, WIDTH, 1<<16);
 
         let mut engine =
             MatmulEngine::<u32>::create(&db, WIDTH, QUERY_SIZE, ComputeDataType::U32, None);
@@ -633,7 +629,8 @@ mod tests {
         }
 
         assert_eq!(
-            vec_column_major, gpu_result,
+            vec_column_major,
+            gpu_result,
             "GPU result does not match CPU implementation"
         );
     }
@@ -641,8 +638,8 @@ mod tests {
     #[test]
     /// u14 x u14 → u14
     fn check_u14() {
-        let db = random_vec(DB_SIZE, WIDTH, 1 << 14);
-        let query = random_vec(QUERY_SIZE, WIDTH, 1 << 14);
+        let db = random_vec(DB_SIZE, WIDTH, 1<<14);
+        let query = random_vec(QUERY_SIZE, WIDTH, 1<<14);
 
         let mut engine =
             MatmulEngine::<u16>::create(&db, WIDTH, QUERY_SIZE, ComputeDataType::U14, None);
@@ -660,7 +657,8 @@ mod tests {
         }
 
         assert_eq!(
-            vec_column_major, gpu_result,
+            vec_column_major,
+            gpu_result,
             "GPU result does not match CPU implementation"
         );
     }
