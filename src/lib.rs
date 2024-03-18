@@ -507,7 +507,7 @@ mod tests {
     const WIDTH: usize = 12_800;
     const QUERY_SIZE: usize = 31;
     const DB_SIZE: usize = 1000;
-    const RNG_SEED: u64 = 40;
+    const RNG_SEED: u64 = 1337;
 
     /// Helpers
     fn random_ndarray<T>(array: Vec<u16>, n: usize, m: usize) -> Array2<T>

@@ -5,7 +5,7 @@ use rand::{rngs::StdRng, Rng, SeedableRng};
 const WIDTH: usize = 12_800;
 const DB_SIZE: usize = 200_000;
 const RNG_SEED: u64 = 40;
-const QUERY_SIZES: &[usize] = &[31, 155, 310, 620, 930, 1550, 31000];
+const QUERY_SIZES: &[usize] = &[31, 155, 310, 620, 930, 1550, 3100];
 
 fn bench_u16(c: &mut Criterion) {
     let mut group = c.benchmark_group("bench_u16");
