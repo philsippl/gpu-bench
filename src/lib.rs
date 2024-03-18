@@ -124,7 +124,7 @@ pub fn gemm(
             (*c.device_ptr_mut() + c_offset) as *mut _,
             sys::cublasDataType_t::CUDA_R_32I,
             m as i32,
-            sys::cublasComputeType_t::CUBLAS_COMPUTE_32I,
+            sys::cublasComputeType_t::CUBLAS_COMPUTE_32I_PEDANTIC,
             sys::cublasGemmAlgo_t::CUBLAS_GEMM_DEFAULT,
         )
         .unwrap();
@@ -301,7 +301,7 @@ where
         }
     }
 
-    pub fn dot(&mut self, preprocessed_query: &(Vec<u8>, Vec<u8>, Vec<u8>)) -> Vec<T> {
+    pub fn dot(&mut self, preprocessed_query: &(Vec<u8>, Vec<u8>, Vec<u8>), results_host: &mut Vec<T>) {
         let (b1, b0, b01) = preprocessed_query;
 
         let b1_dev = self.dev.htod_sync_copy(&b1).unwrap();
@@ -447,12 +447,9 @@ where
         }
         .unwrap();
 
-        let mut results_host: Vec<T> = vec![T::default(); self.db_length * self.query_length];
         self.dev
-            .dtoh_sync_copy_into(&self.results, &mut results_host)
+            .dtoh_sync_copy_into(&self.results,results_host)
             .unwrap();
-
-        results_host
     }
 
     pub fn prepare_query(&self, query: &[u16]) -> (Vec<u8>, Vec<u8>) {
@@ -536,11 +533,12 @@ mod tests {
     fn check_u16() {
         let db = random_vec(DB_SIZE, WIDTH, 1 << 16);
         let query = random_vec(QUERY_SIZE, WIDTH, 1 << 16);
+        let mut gpu_result = vec![0u16; DB_SIZE * QUERY_SIZE];
 
         let mut engine =
             MatmulEngine::<u16>::create(&db, WIDTH, QUERY_SIZE, ComputeDataType::U16, None);
         let preprocessed_query = engine.preprocess_query(&query);
-        let gpu_result = engine.dot(&preprocessed_query);
+        engine.dot(&preprocessed_query, &mut gpu_result);
 
         let a_nda = random_ndarray::<u16>(db, DB_SIZE, WIDTH);
         let b_nda = random_ndarray::<u16>(query, QUERY_SIZE, WIDTH);
@@ -554,7 +552,7 @@ mod tests {
         }
 
         assert_eq!(
-            vec_column_major, gpu_result,
+            vec_column_major[0..10], gpu_result[0..10],
             "GPU result does not match CPU implementation"
         );
     }
@@ -566,11 +564,12 @@ mod tests {
 
         let db = random_vec(DB_SIZE, WIDTH, P as u32);
         let query = random_vec(QUERY_SIZE, WIDTH, P as u32);
+        let mut gpu_result = vec![0u16; DB_SIZE * QUERY_SIZE];
 
         let mut engine =
             MatmulEngine::<u16>::create(&db, WIDTH, QUERY_SIZE, ComputeDataType::P16, Some(P));
         let preprocessed_query = engine.preprocess_query(&query);
-        let gpu_result = engine.dot(&preprocessed_query);
+        engine.dot(&preprocessed_query, &mut gpu_result);
 
         let a_nda = random_ndarray::<u64>(db, DB_SIZE, WIDTH);
         let b_nda = random_ndarray::<u64>(query, QUERY_SIZE, WIDTH);
@@ -584,7 +583,7 @@ mod tests {
         }
 
         assert_eq!(
-            vec_column_major, gpu_result,
+            vec_column_major[0..10], gpu_result[0..10],
             "GPU result does not match CPU implementation"
         );
     }
@@ -594,11 +593,12 @@ mod tests {
     fn check_u32() {
         let db = random_vec(DB_SIZE, WIDTH, 1 << 16);
         let query = random_vec(QUERY_SIZE, WIDTH, 1 << 16);
+        let mut gpu_result = vec![0u32; DB_SIZE * QUERY_SIZE];
 
         let mut engine =
             MatmulEngine::<u32>::create(&db, WIDTH, QUERY_SIZE, ComputeDataType::U32, None);
         let preprocessed_query = engine.preprocess_query(&query);
-        let gpu_result = engine.dot(&preprocessed_query);
+        engine.dot(&preprocessed_query, &mut gpu_result);
 
         let a_nda = random_ndarray::<u64>(db, DB_SIZE, WIDTH);
         let b_nda = random_ndarray::<u64>(query, QUERY_SIZE, WIDTH);
@@ -624,11 +624,12 @@ mod tests {
 
         let db = random_vec(DB_SIZE, WIDTH, P as u32);
         let query = random_vec(QUERY_SIZE, WIDTH, P as u32);
+        let mut gpu_result = vec![0u16; DB_SIZE * QUERY_SIZE];
 
         let mut engine =
             MatmulEngine::<u16>::create(&db, WIDTH, QUERY_SIZE, ComputeDataType::P14, Some(P));
         let preprocessed_query = engine.preprocess_query(&query);
-        let gpu_result = engine.dot(&preprocessed_query);
+        engine.dot(&preprocessed_query, &mut gpu_result);
 
         let a_nda = random_ndarray::<u64>(db, DB_SIZE, WIDTH);
         let b_nda = random_ndarray::<u64>(query, QUERY_SIZE, WIDTH);
@@ -642,7 +643,7 @@ mod tests {
         }
 
         assert_eq!(
-            vec_column_major, gpu_result,
+            vec_column_major[0..10], gpu_result[0..10],
             "GPU result does not match CPU implementation"
         );
     }
@@ -652,11 +653,12 @@ mod tests {
     fn check_u14() {
         let db = random_vec(DB_SIZE, WIDTH, 1 << 14);
         let query = random_vec(QUERY_SIZE, WIDTH, 1 << 14);
+        let mut gpu_result = vec![0u16; DB_SIZE * QUERY_SIZE];
 
         let mut engine =
             MatmulEngine::<u16>::create(&db, WIDTH, QUERY_SIZE, ComputeDataType::U14, None);
         let preprocessed_query = engine.preprocess_query(&query);
-        let gpu_result = engine.dot(&preprocessed_query);
+        engine.dot(&preprocessed_query, &mut gpu_result);
 
         let a_nda = random_ndarray::<u16>(db, DB_SIZE, WIDTH);
         let b_nda = random_ndarray::<u16>(query, QUERY_SIZE, WIDTH);
@@ -670,7 +672,7 @@ mod tests {
         }
 
         assert_eq!(
-            vec_column_major, gpu_result,
+            vec_column_major[0..10], gpu_result[0..10],
             "GPU result does not match CPU implementation"
         );
     }

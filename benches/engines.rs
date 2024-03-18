@@ -20,6 +20,8 @@ fn bench_u16(c: &mut Criterion) {
             .map(|_| rng.gen::<u16>())
             .collect::<Vec<_>>();
 
+        let mut gpu_result = vec![0u16; DB_SIZE * query_size];
+
         group.throughput(Throughput::Elements((DB_SIZE * query_size / 31) as u64));
         let mut engine =
             MatmulEngine::<u16>::create(&db, WIDTH, query_size, ComputeDataType::U16, None);
@@ -30,7 +32,7 @@ fn bench_u16(c: &mut Criterion) {
             format!("u16 x u16 → u16 ({} x {})", DB_SIZE, query_size),
             |b| {
                 b.iter(|| {
-                    black_box(engine.dot(&preprocessed_query));
+                    black_box(engine.dot(&preprocessed_query, &mut gpu_result));
                 });
             },
         );
@@ -51,6 +53,8 @@ fn bench_p16(c: &mut Criterion) {
             .map(|_| rng.gen_range(0..P))
             .collect::<Vec<_>>();
 
+        let mut gpu_result = vec![0u16; DB_SIZE * query_size];
+
         group.throughput(Throughput::Elements((DB_SIZE * query_size / 31) as u64));
         let mut engine =
             MatmulEngine::<u16>::create(&db, WIDTH, query_size, ComputeDataType::P16, Some(P));
@@ -61,7 +65,7 @@ fn bench_p16(c: &mut Criterion) {
             format!("p16 x p16 → p16 ({} x {})", DB_SIZE, query_size),
             |b| {
                 b.iter(|| {
-                    black_box(engine.dot(&preprocessed_query));
+                    black_box(engine.dot(&preprocessed_query, &mut gpu_result));
                 });
             },
         );
@@ -80,6 +84,8 @@ fn bench_u32(c: &mut Criterion) {
             .map(|_| rng.gen::<u16>())
             .collect::<Vec<_>>();
 
+        let mut gpu_result = vec![0u32; DB_SIZE * query_size];
+
         group.throughput(Throughput::Elements((DB_SIZE * query_size / 31) as u64));
         let mut engine =
             MatmulEngine::<u32>::create(&db, WIDTH, query_size, ComputeDataType::U32, None);
@@ -90,7 +96,7 @@ fn bench_u32(c: &mut Criterion) {
             format!("u32 x u32 → u32 ({} x {})", DB_SIZE, query_size),
             |b| {
                 b.iter(|| {
-                    black_box(engine.dot(&preprocessed_query));
+                    black_box(engine.dot(&preprocessed_query, &mut gpu_result));
                 });
             },
         );
@@ -111,6 +117,8 @@ fn bench_p14(c: &mut Criterion) {
             .map(|_| rng.gen_range(0..P))
             .collect::<Vec<_>>();
 
+        let mut gpu_result = vec![0u16; DB_SIZE * query_size];
+
         group.throughput(Throughput::Elements((DB_SIZE * query_size / 31) as u64));
         let mut engine =
             MatmulEngine::<u16>::create(&db, WIDTH, query_size, ComputeDataType::P14, Some(P));
@@ -120,7 +128,7 @@ fn bench_p14(c: &mut Criterion) {
             format!("p14 x p14 → p14 ({} x {})", DB_SIZE, query_size),
             |b| {
                 b.iter(|| {
-                    black_box(engine.dot(&preprocessed_query));
+                    black_box(engine.dot(&preprocessed_query, &mut gpu_result));
                 });
             },
         );
@@ -140,6 +148,8 @@ fn bench_u14(c: &mut Criterion) {
             .map(|_| rng.gen_range(0..(1 << 14)))
             .collect::<Vec<_>>();
 
+        let mut gpu_result = vec![0u16; DB_SIZE * query_size];
+
         group.throughput(Throughput::Elements((DB_SIZE * query_size / 31) as u64));
         let mut engine =
             MatmulEngine::<u16>::create(&db, WIDTH, query_size, ComputeDataType::U14, None);
@@ -148,13 +158,13 @@ fn bench_u14(c: &mut Criterion) {
             format!("u14 x u14 → u14 ({} x {})", DB_SIZE, query_size),
             |b| {
                 b.iter(|| {
-                    black_box(engine.dot(&preprocessed_query));
+                    black_box(engine.dot(&preprocessed_query, &mut gpu_result));
                 });
             },
         );
     }
 }
 
-criterion_group!(benches, bench_u16, bench_p16, bench_u32, bench_p14, bench_u14);
-// criterion_group!(benches, bench_p14);
+// criterion_group!(benches, bench_u16, bench_p16, bench_u32, bench_p14, bench_u14);
+criterion_group!(benches, bench_u14);
 criterion_main!(benches);
