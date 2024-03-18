@@ -16,7 +16,7 @@ use rayon::iter::{
 
 const WIDTH: usize = 12_800;
 const QUERY_SIZE: usize = 310;
-const DB_SIZE: usize = 10_000;
+const DB_SIZE: usize = 200_000;
 const RNG_SEED: u64 = 42;
 
 const PTX_SRC: &str = "
@@ -62,7 +62,7 @@ fn gemm(
 }
 
 fn cublas(c: &mut Criterion) {
-    let mut group = c.benchmark_group("cublas");
+    let mut group = c.benchmark_group("legacy cublas u14");
 
     let mut rng = StdRng::seed_from_u64(RNG_SEED);
     let dev = CudaDevice::new(0).unwrap();
@@ -111,7 +111,7 @@ fn cublas(c: &mut Criterion) {
     group.throughput(Throughput::Elements((DB_SIZE * QUERY_SIZE / 31) as u64));
 
     group.bench_function(
-        format!("cublas u16 mul with int8 {} x {}", DB_SIZE, QUERY_SIZE),
+        format!("leagcy cublas u14 mul with int8 {} x {}", DB_SIZE, QUERY_SIZE),
         |b| {
             b.iter(|| {
                 let b1_dev = dev.htod_sync_copy(&b1_host).unwrap();

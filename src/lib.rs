@@ -284,21 +284,25 @@ where
         }
     }
 
-    pub fn dot(&mut self, query: &[u16]) -> Vec<T> {
-        let (b1, b0, b01) = match self.data_type {
+    pub fn preprocess_query(&self, query: &[u16]) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
+        match self.data_type {
             ComputeDataType::P14 => {
                 let (b1, b0, b01) = self.prepare_query_karatsuba(query);
-                (b1, b0, Some(b01))
+                (b1, b0, b01)
             }
             ComputeDataType::U14 => {
                 let (b1, b0) = self.prepare_query_u14(query);
-                (b1, b0, None)
+                (b1, b0, vec![])
             }
             _ => {
                 let (b1, b0) = self.prepare_query(query);
-                (b1, b0, None)
+                (b1, b0, vec![])
             }
-        };
+        }
+    }
+
+    pub fn dot(&mut self, preprocessed_query: &(Vec<u8>, Vec<u8>, Vec<u8>)) -> Vec<T> {
+        let (b1, b0, b01) = preprocessed_query;
 
         let b1_dev = self.dev.htod_sync_copy(&b1).unwrap();
         let b0_dev = self.dev.htod_sync_copy(&b0).unwrap();
@@ -353,7 +357,7 @@ where
                 self.entry_size,
             );
 
-            let b01_dev = self.dev.htod_sync_copy(&b01.unwrap()).unwrap();
+            let b01_dev = self.dev.htod_sync_copy(&b01).unwrap();
 
             gemm(
                 &self.blas.handle(),
@@ -505,12 +509,17 @@ mod tests {
     const DB_SIZE: usize = 1000;
     const RNG_SEED: u64 = 40;
 
-
     /// Helpers
-    fn random_ndarray<T>(array: Vec<u16>, n: usize, m: usize) -> Array2<T> where T: FromPrimitive {
+    fn random_ndarray<T>(array: Vec<u16>, n: usize, m: usize) -> Array2<T>
+    where
+        T: FromPrimitive,
+    {
         Array2::from_shape_vec(
             (n as usize, m as usize),
-            array.into_iter().map(|x| T::from_u16(x).unwrap()).collect::<Vec<_>>(),
+            array
+                .into_iter()
+                .map(|x| T::from_u16(x).unwrap())
+                .collect::<Vec<_>>(),
         )
         .unwrap()
     }
@@ -525,12 +534,13 @@ mod tests {
     #[test]
     /// u16 x u16 → u16
     fn check_u16() {
-        let db = random_vec(DB_SIZE, WIDTH, 1<<16);
-        let query = random_vec(QUERY_SIZE, WIDTH, 1<<16);
+        let db = random_vec(DB_SIZE, WIDTH, 1 << 16);
+        let query = random_vec(QUERY_SIZE, WIDTH, 1 << 16);
 
         let mut engine =
             MatmulEngine::<u16>::create(&db, WIDTH, QUERY_SIZE, ComputeDataType::U16, None);
-        let gpu_result = engine.dot(&query);
+        let preprocessed_query = engine.preprocess_query(&query);
+        let gpu_result = engine.dot(&preprocessed_query);
 
         let a_nda = random_ndarray::<u16>(db, DB_SIZE, WIDTH);
         let b_nda = random_ndarray::<u16>(query, QUERY_SIZE, WIDTH);
@@ -559,7 +569,8 @@ mod tests {
 
         let mut engine =
             MatmulEngine::<u16>::create(&db, WIDTH, QUERY_SIZE, ComputeDataType::P16, Some(P));
-        let gpu_result = engine.dot(&query);
+        let preprocessed_query = engine.preprocess_query(&query);
+        let gpu_result = engine.dot(&preprocessed_query);
 
         let a_nda = random_ndarray::<u64>(db, DB_SIZE, WIDTH);
         let b_nda = random_ndarray::<u64>(query, QUERY_SIZE, WIDTH);
@@ -581,12 +592,13 @@ mod tests {
     #[test]
     /// u16 x u16 → u32
     fn check_u32() {
-        let db = random_vec(DB_SIZE, WIDTH, 1<<16);
-        let query = random_vec(QUERY_SIZE, WIDTH, 1<<16);
+        let db = random_vec(DB_SIZE, WIDTH, 1 << 16);
+        let query = random_vec(QUERY_SIZE, WIDTH, 1 << 16);
 
         let mut engine =
             MatmulEngine::<u32>::create(&db, WIDTH, QUERY_SIZE, ComputeDataType::U32, None);
-        let gpu_result = engine.dot(&query);
+        let preprocessed_query = engine.preprocess_query(&query);
+        let gpu_result = engine.dot(&preprocessed_query);
 
         let a_nda = random_ndarray::<u64>(db, DB_SIZE, WIDTH);
         let b_nda = random_ndarray::<u64>(query, QUERY_SIZE, WIDTH);
@@ -615,7 +627,8 @@ mod tests {
 
         let mut engine =
             MatmulEngine::<u16>::create(&db, WIDTH, QUERY_SIZE, ComputeDataType::P14, Some(P));
-        let gpu_result = engine.dot(&query);
+        let preprocessed_query = engine.preprocess_query(&query);
+        let gpu_result = engine.dot(&preprocessed_query);
 
         let a_nda = random_ndarray::<u64>(db, DB_SIZE, WIDTH);
         let b_nda = random_ndarray::<u64>(query, QUERY_SIZE, WIDTH);
@@ -629,8 +642,7 @@ mod tests {
         }
 
         assert_eq!(
-            vec_column_major,
-            gpu_result,
+            vec_column_major, gpu_result,
             "GPU result does not match CPU implementation"
         );
     }
@@ -638,12 +650,13 @@ mod tests {
     #[test]
     /// u14 x u14 → u14
     fn check_u14() {
-        let db = random_vec(DB_SIZE, WIDTH, 1<<14);
-        let query = random_vec(QUERY_SIZE, WIDTH, 1<<14);
+        let db = random_vec(DB_SIZE, WIDTH, 1 << 14);
+        let query = random_vec(QUERY_SIZE, WIDTH, 1 << 14);
 
         let mut engine =
             MatmulEngine::<u16>::create(&db, WIDTH, QUERY_SIZE, ComputeDataType::U14, None);
-        let gpu_result = engine.dot(&query);
+        let preprocessed_query = engine.preprocess_query(&query);
+        let gpu_result = engine.dot(&preprocessed_query);
 
         let a_nda = random_ndarray::<u16>(db, DB_SIZE, WIDTH);
         let b_nda = random_ndarray::<u16>(query, QUERY_SIZE, WIDTH);
@@ -657,8 +670,7 @@ mod tests {
         }
 
         assert_eq!(
-            vec_column_major,
-            gpu_result,
+            vec_column_major, gpu_result,
             "GPU result does not match CPU implementation"
         );
     }

@@ -32,10 +32,10 @@ debug = true
 name = "engines"
 harness = false
 
-[[bench]]
-name = "basics"
-harness = false
-
 #[[bench]]
-#name = "cublas_u14"
+#name = "basics"
 #harness = false
+
+[[bench]]
+name = "cublas_u14"
+harness = false
