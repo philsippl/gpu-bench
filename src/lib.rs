@@ -70,19 +70,19 @@ extern \"C\" __global__ void matmul_p14(int* c, unsigned short* output, unsigned
     size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx < numElements) {
         
-        long long a0s = a0Sums[idx % numRows];
-        long long a1s = a1Sums[idx % numRows];
+        unsigned int a0s = a0Sums[idx % numRows];
+        unsigned int a1s = a1Sums[idx % numRows];
 
         // Correct the sum to unsigned
-        long long b0s = b0Sums[idx / numRows] + numCols * 128;
-        long long b1s = b1Sums[idx / numRows] + numCols * 128;
+        int b0s = b0Sums[idx / numRows];
+        int b1s = b1Sums[idx / numRows];
 
         // Correct the intermediate results to unsigned
-        long long c00 = c[idx] + ((a0s + b0s) << 7) - (numCols * 16384);
-        long long c11 = c[idx + numElements] + ((a1s + b1s) << 7) - (numCols * 16384);
+        long long c00 = c[idx];
+        long long c11 = c[idx + numElements];
         long long tmp = c[idx + numElements * 2] + ((a0s + a1s + b1s + b0s) << 7) - (numCols * 16384);
 
-        // Calculate the u32 result and reduce
+        // Calculate the result and reduce
         output[idx] = (c00 + ((tmp - c00 - c11) << 7) + (c11 << 14)) % p;
     }
 }
