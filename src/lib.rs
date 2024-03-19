@@ -69,7 +69,6 @@ extern \"C\" __global__ void matmul_u32(int* c, unsigned int* output, unsigned i
 extern \"C\" __global__ void matmul_p14(int* c, unsigned short* output, unsigned int* a0Sums, unsigned int* a1Sums, int* b0Sums, int* b1Sums, size_t numRows, size_t numElements, size_t numCols, unsigned short p) {
     size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx < numElements) {
-        
         unsigned int a0s = a0Sums[idx % numRows];
         unsigned int a1s = a1Sums[idx % numRows];
 
@@ -196,8 +195,7 @@ where
         let function = dev.get_func(function_name, function_name).unwrap();
 
         let (mask1, mask0, offset) = match data_type {
-            ComputeDataType::U14 => (7, 0x7F, 0),
-            ComputeDataType::P14 => (7, 0x7F, 128),
+            ComputeDataType::P14 | ComputeDataType::U14 => (7, 0x7F, 0),
             _ => (8, 0xFF, 128),
         };
 
@@ -484,8 +482,8 @@ where
         for i in 0..query.len() {
             let tmp_1 = query[i] >> 7;
             let tmp_0 = query[i] & 0x7F;
-            b1[i] = (tmp_1 as i8 - 127 - 1) as u8;
-            b0[i] = (tmp_0 as i8 - 127 - 1) as u8;
+            b1[i] = tmp_1 as u8;
+            b0[i] = tmp_0 as u8;
             b01[i] = ((tmp_1 + tmp_0) as i8 - 127 - 1) as u8;
         }
 
