@@ -37,12 +37,12 @@ template<typename T>
 __global__ void matmul_u32_impl(int* c, T* output, unsigned int* a0Sums, unsigned int* a1Sums, int* b0Sums, int* b1Sums, size_t numRows, size_t numElements, size_t numCols, long long p) {
     size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx < numElements) {
-        long long a0s = a0Sums[idx % numRows];
-        long long a1s = a1Sums[idx % numRows];
+        unsigned int a0s = a0Sums[idx % numRows];
+        unsigned int a1s = a1Sums[idx % numRows];
 
         // Correct the sum to unsigned
-        long long b0s = b0Sums[idx / numRows] + numCols * 128;
-        long long b1s = b1Sums[idx / numRows] + numCols * 128;
+        int b0s = b0Sums[idx / numRows] + numCols * 128;
+        int b1s = b1Sums[idx / numRows] + numCols * 128;
 
         // Correct the intermediate results to unsigned
         long long c00 = c[idx] + ((a0s + b0s) << 7) - (numCols * 16384);
