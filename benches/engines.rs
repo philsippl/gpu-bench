@@ -165,6 +165,6 @@ fn bench_u14(c: &mut Criterion) {
     }
 }
 
-// criterion_group!(benches, bench_u16, bench_p16, bench_u32, bench_p14, bench_u14);
-criterion_group!(benches, bench_u14);
+criterion_group!(benches, bench_u16, bench_p16, bench_u32, bench_p14, bench_u14);
+// criterion_group!(benches, bench_u14);
 criterion_main!(benches);
