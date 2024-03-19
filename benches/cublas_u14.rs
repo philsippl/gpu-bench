@@ -1,10 +1,15 @@
 use std::ffi::c_void;
+use std::mem;
+use std::sync::Arc;
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion, Throughput};
 
 use cudarc::cublas::result::gemm_ex;
 use cudarc::cublas::{sys, CudaBlas};
+use cudarc::cublaslt::{self, CudaBlasLT, MatmulShared};
 
+use cudarc::driver::result::stream::null;
+use cudarc::driver::sys::CUdeviceptr;
 use cudarc::driver::{CudaDevice, CudaSlice, DevicePtr, DevicePtrMut, LaunchAsync, LaunchConfig};
 use cudarc::nvrtc::compile_ptx;
 use ndarray::Array2;
@@ -15,8 +20,8 @@ use rayon::iter::{
 };
 
 const WIDTH: usize = 12_800;
-const QUERY_SIZE: usize = 310;
-const DB_SIZE: usize = 200_000;
+const QUERY_SIZE: usize = 32;
+const DB_SIZE: usize = 1_000;
 const RNG_SEED: u64 = 42;
 
 const PTX_SRC: &str = "
@@ -29,36 +34,110 @@ extern \"C\" __global__ void calc_u14(unsigned int* c, unsigned short* output, s
 ";
 
 fn gemm(
-    handle: &sys::cublasHandle_t,
+    dev: Arc<CudaDevice>,
+    handle: &cublaslt::sys::cublasLtHandle_t,
     a: &CudaSlice<u8>,
     b: &CudaSlice<u8>,
     c: &mut CudaSlice<u32>,
     c_offset: u64,
 ) {
+    let mut desc = cublaslt::result::create_matmul_desc(
+        cublaslt::sys::cublasComputeType_t::CUBLAS_COMPUTE_32I_PEDANTIC,
+        cublaslt::sys::cudaDataType_t::CUDA_R_32I,
+    )
+    .unwrap();
+
+    let a_layout = cublaslt::result::create_matrix_layout(
+        cublaslt::sys::cudaDataType_t::CUDA_R_8I,
+        WIDTH as u64,
+        DB_SIZE as u64,
+        WIDTH as i64,
+    )
+    .unwrap();
+    let b_layout = cublaslt::result::create_matrix_layout(
+        cublaslt::sys::cudaDataType_t::CUDA_R_8I,
+        WIDTH as u64,
+        QUERY_SIZE as u64,
+        WIDTH as i64,
+    )
+    .unwrap();
+    let c_layout = cublaslt::result::create_matrix_layout(
+        cublaslt::sys::cudaDataType_t::CUDA_R_32I,
+        DB_SIZE as u64,
+        QUERY_SIZE as u64,
+        DB_SIZE as i64,
+    )
+    .unwrap();
+
+    let workspace: CudaSlice<u8> = dev.alloc_zeros(4_194_304).unwrap();
+
     unsafe {
-        gemm_ex(
-            handle.clone(),
-            sys::cublasOperation_t::CUBLAS_OP_T,
-            sys::cublasOperation_t::CUBLAS_OP_N,
-            DB_SIZE as i32,
-            QUERY_SIZE as i32,
-            WIDTH as i32,
+        let x = cublaslt::result::create_matmul_pref().unwrap();
+        cublaslt::result::set_matmul_pref_attribute(
+            x,
+            cublaslt::sys::cublasLtMatmulPreferenceAttributes_t::CUBLASLT_MATMUL_PREF_MAX_WORKSPACE_BYTES,
+            (&4_194_304) as *const i32 as *const _,
+            mem::size_of::<usize>(),
+        ).unwrap();
+
+        cublaslt::result::set_matmul_desc_attribute(
+            desc,
+            cublaslt::sys::cublasLtMatmulDescAttributes_t::CUBLASLT_MATMUL_DESC_TRANSA,
+            (&1u32) as *const u32 as *const _,
+            mem::size_of::<u32>(),
+        )
+        .unwrap();
+
+        let heuristic = cublaslt::result::get_matmul_algo_heuristic(
+            *handle, desc, a_layout, b_layout, c_layout, c_layout, x,
+        )
+        .unwrap();
+
+        cublaslt::result::matmul(
+            *handle,
+            desc,
             &1 as *const i32 as *const c_void,
-            *a.device_ptr() as *const _,
-            sys::cublasDataType_t::CUDA_R_8I,
-            WIDTH as i32,
-            *b.device_ptr() as *const _,
-            sys::cublasDataType_t::CUDA_R_8I,
-            WIDTH as i32,
             &0 as *const i32 as *const c_void,
+            *a.device_ptr() as *const _,
+            a_layout,
+            *b.device_ptr() as *const _,
+            b_layout,
             (*c.device_ptr_mut() + c_offset) as *mut _,
-            sys::cublasDataType_t::CUDA_R_32I,
-            DB_SIZE as i32,
-            sys::cublasComputeType_t::CUBLAS_COMPUTE_32I_PEDANTIC,
-            sys::cublasGemmAlgo_t::CUBLAS_GEMM_DEFAULT,
+            c_layout,
+            (*c.device_ptr_mut() + c_offset) as *mut _,
+            c_layout,
+            &heuristic.algo,
+            workspace.device_ptr() as *const CUdeviceptr as *mut _,
+            4_194_304,
+            *dev.cu_stream() as *mut _,
         )
         .unwrap();
     }
+
+    // unsafe {
+    //     gemm_ex(
+    //         handle.clone(),
+    //         sys::cublasOperation_t::CUBLAS_OP_T,
+    //         sys::cublasOperation_t::CUBLAS_OP_N,
+    //         DB_SIZE as i32,
+    //         QUERY_SIZE as i32,
+    //         WIDTH as i32,
+    //         &1 as *const i32 as *const c_void,
+    //         *a.device_ptr() as *const _,
+    //         sys::cublasDataType_t::CUDA_R_8I,
+    //         WIDTH as i32,
+    //         *b.device_ptr() as *const _,
+    //         sys::cublasDataType_t::CUDA_R_8I,
+    //         WIDTH as i32,
+    //         &0 as *const i32 as *const c_void,
+    //         (*c.device_ptr_mut() + c_offset) as *mut _,
+    //         sys::cublasDataType_t::CUDA_R_32I,
+    //         DB_SIZE as i32,
+    //         sys::cublasComputeType_t::CUBLAS_COMPUTE_32I_PEDANTIC,
+    //         sys::cublasGemmAlgo_t::CUBLAS_GEMM_DEFAULT,
+    //     )
+    //     .unwrap();
+    // }
 }
 
 fn cublas(c: &mut Criterion) {
@@ -67,6 +146,25 @@ fn cublas(c: &mut Criterion) {
     let mut rng = StdRng::seed_from_u64(RNG_SEED);
     let dev = CudaDevice::new(0).unwrap();
     let blas = CudaBlas::new(dev.clone()).unwrap();
+
+    let blaslt = CudaBlasLT::new(dev.clone()).unwrap();
+
+    // *self.handle(),
+    // matmul_desc.handle,
+    // (&cfg.alpha) as *const _ as *const _,
+    // (&cfg.beta) as *const _ as *const _,
+    // *a.device_ptr() as *const _,
+    // a_layout.handle,
+    // *b.device_ptr() as *const _,
+    // b_layout.handle,
+    // *c.device_ptr_mut() as *const _,
+    // c_layout.handle,
+    // *c.device_ptr_mut() as *mut _,
+    // c_layout.handle,
+    // (&heuristic.algo) as *const _,
+    // *self.workspace().buffer.device_ptr() as *const CUdeviceptr as *mut _,
+    // self.workspace().size,
+    // *self.stream() as *mut _,
 
     // rng.gen::<u16>()
 
@@ -111,22 +209,34 @@ fn cublas(c: &mut Criterion) {
     group.throughput(Throughput::Elements((DB_SIZE * QUERY_SIZE / 31) as u64));
 
     group.bench_function(
-        format!("leagcy cublas u14 mul with int8 {} x {}", DB_SIZE, QUERY_SIZE),
+        format!(
+            "leagcy cublas u14 mul with int8 {} x {}",
+            DB_SIZE, QUERY_SIZE
+        ),
         |b| {
             b.iter(|| {
                 let b1_dev = dev.htod_sync_copy(&b1_host).unwrap();
                 let b0_dev = dev.htod_sync_copy(&b0_host).unwrap();
 
-                gemm(&blas.handle(), &a0_dev, &b0_dev, &mut c_dev, 0);
                 gemm(
-                    &blas.handle(),
+                    dev.clone(),
+                    &blaslt.handle(),
+                    &a0_dev,
+                    &b0_dev,
+                    &mut c_dev,
+                    0,
+                );
+                gemm(
+                    dev.clone(),
+                    &blaslt.handle(),
                     &a0_dev,
                     &b1_dev,
                     &mut c_dev,
                     (DB_SIZE * QUERY_SIZE * 4 * 1) as u64,
                 );
                 gemm(
-                    &blas.handle(),
+                    dev.clone(),
+                    &blaslt.handle(),
                     &a1_dev,
                     &b0_dev,
                     &mut c_dev,
@@ -148,35 +258,37 @@ fn cublas(c: &mut Criterion) {
         },
     );
 
-    // let a_nda = Array2::from_shape_vec(
-    //     (DB_SIZE as usize,  WIDTH as usize),
-    //     a_host.into_iter().map(|x| x as u16).collect::<Vec<_>>(),
-    // )
-    // .unwrap();
-    // let b_nda = Array2::from_shape_vec(
-    //     (QUERY_SIZE as usize, WIDTH as usize),
-    //     b_host.into_iter().map(|x| x as u16).collect::<Vec<_>>(),
-    // )
-    // .unwrap();
-    // let c_nda = a_nda
-    //     .dot(&b_nda.t());
-    //     // .into_raw_vec()
-    //     // .into_iter()
-    //     // .map(|x| x as u32)
-    //     // .collect::<Vec<_>>();
+    let a_nda = Array2::from_shape_vec(
+        (DB_SIZE as usize, WIDTH as usize),
+        a_host.into_iter().map(|x| x as u16).collect::<Vec<_>>(),
+    )
+    .unwrap();
+    let b_nda = Array2::from_shape_vec(
+        (QUERY_SIZE as usize, WIDTH as usize),
+        b_host.into_iter().map(|x| x as u16).collect::<Vec<_>>(),
+    )
+    .unwrap();
+    let c_nda = a_nda.dot(&b_nda.t());
+    // .into_raw_vec()
+    // .into_iter()
+    // .map(|x| x as u32)
+    // .collect::<Vec<_>>();
 
-    // let mut vec_column_major: Vec<u16> = Vec::new();
-    // for col in 0..c_nda.ncols() {
-    //     for row in c_nda.column(col) {
-    //         vec_column_major.push(*row);
-    //     }
-    // }
+    let mut vec_column_major: Vec<u16> = Vec::new();
+    for col in 0..c_nda.ncols() {
+        for row in c_nda.column(col) {
+            vec_column_major.push(*row);
+        }
+    }
 
-    // assert_eq!(
-    //     vec_column_major[0..100].iter().map(|x| x % 16384).collect::<Vec<_>>(),
-    //     final_host[0..100],
-    //     "GPU result does not match CPU implementation"
-    // );
+    assert_eq!(
+        vec_column_major[0..100]
+            .iter()
+            .map(|x| x % 16384)
+            .collect::<Vec<_>>(),
+        final_host[0..100],
+        "GPU result does not match CPU implementation"
+    );
 
     group.finish();
 }

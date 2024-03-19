@@ -6,7 +6,7 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-cudarc = "0.10.0"
+cudarc = {version = "0.10.0", features = ["cublaslt"]}
 rand = "0.8.5"
 ndarray = "0.15.3"
 rayon = "1.5.1"
@@ -22,15 +22,15 @@ lto = "fat"
 codegen-units = 1
 debug = true
 
-[profile.bench]
-opt-level = 3
-lto = "fat"
-codegen-units = 1
-debug = true
+#[profile.bench]
+#opt-level = 3
+#lto = "fat"
+#codegen-units = 1
+#debug = true
 
-[[bench]]
-name = "engines"
-harness = false
+#[[bench]]
+#name = "engines"
+#harness = false
 
 #[[bench]]
 #name = "basics"
