@@ -69,20 +69,19 @@ extern \"C\" __global__ void matmul_u32(int* c, unsigned int* output, unsigned i
 extern \"C\" __global__ void matmul_p14(int* c, unsigned short* output, unsigned int* a0Sums, unsigned int* a1Sums, int* b0Sums, int* b1Sums, size_t numRows, size_t numElements, size_t numCols, unsigned short p) {
     size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx < numElements) {
-        
-        long long a0s = a0Sums[idx % numRows];
-        long long a1s = a1Sums[idx % numRows];
+        unsigned int a0s = a0Sums[idx % numRows];
+        unsigned int a1s = a1Sums[idx % numRows];
 
         // Correct the sum to unsigned
-        long long b0s = b0Sums[idx / numRows] + numCols * 128;
-        long long b1s = b1Sums[idx / numRows] + numCols * 128;
+        int b0s = b0Sums[idx / numRows];
+        int b1s = b1Sums[idx / numRows];
 
         // Correct the intermediate results to unsigned
-        long long c00 = c[idx] + ((a0s + b0s) << 7) - (numCols * 16384);
-        long long c11 = c[idx + numElements] + ((a1s + b1s) << 7) - (numCols * 16384);
+        long long c00 = c[idx];
+        long long c11 = c[idx + numElements];
         long long tmp = c[idx + numElements * 2] + ((a0s + a1s + b1s + b0s) << 7) - (numCols * 16384);
 
-        // Calculate the u32 result and reduce
+        // Calculate the result and reduce
         output[idx] = (c00 + ((tmp - c00 - c11) << 7) + (c11 << 14)) % p;
     }
 }
@@ -196,8 +195,7 @@ where
         let function = dev.get_func(function_name, function_name).unwrap();
 
         let (mask1, mask0, offset) = match data_type {
-            ComputeDataType::U14 => (7, 0x7F, 0),
-            ComputeDataType::P14 => (7, 0x7F, 128),
+            ComputeDataType::P14 | ComputeDataType::U14 => (7, 0x7F, 0),
             _ => (8, 0xFF, 128),
         };
 
@@ -484,8 +482,8 @@ where
         for i in 0..query.len() {
             let tmp_1 = query[i] >> 7;
             let tmp_0 = query[i] & 0x7F;
-            b1[i] = (tmp_1 as i8 - 127 - 1) as u8;
-            b0[i] = (tmp_0 as i8 - 127 - 1) as u8;
+            b1[i] = tmp_1 as u8;
+            b0[i] = tmp_0 as u8;
             b01[i] = ((tmp_1 + tmp_0) as i8 - 127 - 1) as u8;
         }
 
