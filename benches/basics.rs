@@ -1,5 +1,6 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion, Throughput};
 use cudarc::cublas::CudaBlas;
+use cudarc::driver::sys::cuMemAllocHost_v2;
 use cudarc::driver::{CudaDevice, CudaSlice};
 use rand::{rngs::StdRng, Rng, SeedableRng};
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
@@ -46,12 +47,12 @@ fn bench_decomposition(c: &mut Criterion) {
     }
 }
 
-fn bench_memcpy(c: &mut Criterion) {
+fn bench_memcpy_htod(c: &mut Criterion) {
     let mut group = c.benchmark_group("bench_memcpy");
     let mut rng = StdRng::seed_from_u64(RNG_SEED);
     let dev = CudaDevice::new(0).unwrap();
 
-    for query_size in [1, 5, 10, 20, 30, 40, 50, 100] {
+    for query_size in [1, 5, 10, 30, 50, 100, 1000] {
         let query = (0..query_size * 31 * WIDTH)
             .map(|_| rng.gen::<u16>())
             .collect::<Vec<_>>();
@@ -68,13 +69,37 @@ fn bench_memcpy(c: &mut Criterion) {
     }
 }
 
+fn bench_memcpy_dtoh(c: &mut Criterion) {
+    let mut group = c.benchmark_group("bench_memcpy");
+    let dev = CudaDevice::new(0).unwrap();
+
+    for query_size in [1, 5, 10, 30, 50, 100, 1000] {
+        let data: CudaSlice<u8> = dev.alloc_zeros(query_size * 31 * WIDTH).unwrap();
+        let mut result = vec![0u8; query_size * 31 * WIDTH];
+
+        unsafe {
+            cuMemAllocHost_v2(result.as_mut_ptr() as *mut _, query_size * 31 * WIDTH);
+        }
+
+        group.throughput(Throughput::Bytes((query_size * 31 * WIDTH) as u64));
+        group.bench_function(
+            format!("host to device memcpy ({} x {})", query_size, WIDTH),
+            |b| {
+                b.iter(|| {
+                    black_box(dev.dtoh_sync_copy_into(&data, &mut result).unwrap());
+                });
+            },
+        );
+    }
+}
+
 fn bench_rowsum(c: &mut Criterion) {
     let mut group = c.benchmark_group("bench_rowsum");
     let mut rng = StdRng::seed_from_u64(RNG_SEED);
     let dev = CudaDevice::new(0).unwrap();
     let blas = CudaBlas::new(dev.clone()).unwrap();
 
-    for query_size in [1, 10, 30, 50, 100, 1000, 10000] {
+    for query_size in [50, 100, 1000] {
         let query = (0..query_size * 31 * WIDTH)
             .map(|_| rng.gen::<u8>())
             .collect::<Vec<_>>();
@@ -161,5 +186,6 @@ fn bench_gemm(c: &mut Criterion) {
     }
 }
 
-criterion_group!(benches, bench_rowsum, bench_memcpy, bench_decomposition, bench_gemm);
+// criterion_group!(benches, bench_rowsum, bench_memcpy, bench_decomposition, bench_gemm);
+criterion_group!(benches, bench_memcpy_dtoh);
 criterion_main!(benches);
