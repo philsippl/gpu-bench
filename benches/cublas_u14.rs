@@ -21,7 +21,7 @@ use rayon::iter::{
 
 const WIDTH: usize = 12_800;
 const QUERY_SIZE: usize = 32;
-const DB_SIZE: usize = 1_000;
+const DB_SIZE: usize = 100_000;
 const RNG_SEED: u64 = 42;
 
 const PTX_SRC: &str = "
