@@ -10,9 +10,10 @@ cudarc = "0.10.0"
 rand = "0.8.5"
 ndarray = "0.15.3"
 rayon = "1.5.1"
+num-traits = "0.2"
 
 [dev-dependencies]
-criterion = { version = "0.4"}
+criterion = { version = "0.4", features = ["html_reports"]}
 ndarray = "0.15.3"
 
 [profile.release]
@@ -27,26 +28,14 @@ lto = "fat"
 codegen-units = 1
 debug = true
 
-#[[bench]]
-#name = "custom_kernel"
-#harness = false
+[[bench]]
+name = "engines"
+harness = false
 
 #[[bench]]
-#name = "custom_kernel_triton"
-#harness = false
-
-#[[bench]]
-#name = "cublas"
-#harness = false
-
-#[[bench]]
-#name = "custom_kernel_2d"
-#harness = false
-
-#[[bench]]
-#name = "cublas_u14"
+#name = "basics"
 #harness = false
 
 [[bench]]
-name = "cublas_u16"
+name = "cublas_u14"
 harness = false
