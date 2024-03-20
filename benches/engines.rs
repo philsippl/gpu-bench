@@ -93,7 +93,7 @@ fn bench_u32(c: &mut Criterion) {
         let preprocessed_query = engine.preprocess_query(&query);
 
         group.bench_function(
-            format!("u32 x u32 → u32 ({} x {})", DB_SIZE, query_size),
+            format!("u16 x u16 → u32 ({} x {})", DB_SIZE, query_size),
             |b| {
                 b.iter(|| {
                     black_box(engine.dot(&preprocessed_query, &mut gpu_result));
