@@ -42,7 +42,7 @@ def load_benchmarks(benchmark_dirs):
         bench_name = bench_dir.split("/")[2]
         if bench_name not in benchmarks:
             benchmarks[bench_name] = {"x": [], "y": []}
-        benchmarks[bench_name]["y"].append(1/(mean_estimate/elements/1e9))
+        benchmarks[bench_name]["y"].append(1/(mean_estimate/elements/1e9)/1e6)
         benchmarks[bench_name]["x"].append(batch_size/31)
         print(1/(mean_estimate/elements/1e9))
     return benchmarks
@@ -54,7 +54,7 @@ def plot_benchmarks(benchmarks, output_file):
         plt.plot(values["x"], values["y"], label=bench, marker='.')
 
     plt.xlabel('Batch Size')
-    plt.ylabel('Queries/s')
+    plt.ylabel('Million Queries/s')
     plt.title('Matmul')
     plt.legend()
     plt.grid(True)
