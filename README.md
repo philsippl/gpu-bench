@@ -95,50 +95,50 @@ Found 15 outliers among 100 measurements (15.00%)
   9 (9.00%) high mild
   6 (6.00%) high severe
 
-bench_u32/u32 x u32 → u32 (200000 x 31)
+bench_u32/u16 x u16 → u32 (200000 x 31)
                         time:   [12.493 ms 12.551 ms 12.620 ms]
                         thrpt:  [15.847 Melem/s 15.935 Melem/s 16.009 Melem/s]
 Found 10 outliers among 100 measurements (10.00%)
   10 (10.00%) high severe
-bench_u32/u32 x u32 → u32 (200000 x 155)
+bench_u32/u16 x u16 → u32 (200000 x 155)
                         time:   [17.705 ms 17.738 ms 17.779 ms]
                         thrpt:  [56.247 Melem/s 56.376 Melem/s 56.482 Melem/s]
 Found 14 outliers among 100 measurements (14.00%)
   5 (5.00%) high mild
   9 (9.00%) high severe
-bench_u32/u32 x u32 → u32 (200000 x 310)
+bench_u32/u16 x u16 → u32 (200000 x 310)
                         time:   [24.314 ms 24.337 ms 24.373 ms]
                         thrpt:  [82.059 Melem/s 82.178 Melem/s 82.257 Melem/s]
 Found 4 outliers among 100 measurements (4.00%)
   3 (3.00%) high mild
   1 (1.00%) high severe
-Benchmarking bench_u32/u32 x u32 → u32 (200000 x 620): Warming up for 3.0000 s
+Benchmarking bench_u32/u16 x u16 → u32 (200000 x 620): Warming up for 3.0000 s
 Warning: Unable to complete 100 samples in 5.0s. You may wish to increase target time to 6.0s, or reduce sample count to 80.
-bench_u32/u32 x u32 → u32 (200000 x 620)
+bench_u32/u16 x u16 → u32 (200000 x 620)
                         time:   [54.761 ms 55.638 ms 56.672 ms]
                         thrpt:  [70.581 Melem/s 71.893 Melem/s 73.045 Melem/s]
 Found 9 outliers among 100 measurements (9.00%)
   1 (1.00%) high mild
   8 (8.00%) high severe
-Benchmarking bench_u32/u32 x u32 → u32 (200000 x 930): Warming up for 3.0000 s
+Benchmarking bench_u32/u16 x u16 → u32 (200000 x 930): Warming up for 3.0000 s
 Warning: Unable to complete 100 samples in 5.0s. You may wish to increase target time to 7.2s, or reduce sample count to 60.
-bench_u32/u32 x u32 → u32 (200000 x 930)
+bench_u32/u16 x u16 → u32 (200000 x 930)
                         time:   [67.528 ms 68.944 ms 70.593 ms]
                         thrpt:  [84.995 Melem/s 87.028 Melem/s 88.852 Melem/s]
 Found 14 outliers among 100 measurements (14.00%)
   2 (2.00%) high mild
   12 (12.00%) high severe
-Benchmarking bench_u32/u32 x u32 → u32 (200000 x 1550): Warming up for 3.0000 s
+Benchmarking bench_u32/u16 x u16 → u32 (200000 x 1550): Warming up for 3.0000 s
 Warning: Unable to complete 100 samples in 5.0s. You may wish to increase target time to 13.8s, or reduce sample count to 30.
-bench_u32/u32 x u32 → u32 (200000 x 1550)
+bench_u32/u16 x u16 → u32 (200000 x 1550)
                         time:   [119.50 ms 119.68 ms 119.88 ms]
                         thrpt:  [83.416 Melem/s 83.559 Melem/s 83.685 Melem/s]
 Found 11 outliers among 100 measurements (11.00%)
   3 (3.00%) high mild
   8 (8.00%) high severe
-Benchmarking bench_u32/u32 x u32 → u32 (200000 x 3100): Warming up for 3.0000 s
+Benchmarking bench_u32/u16 x u16 → u32 (200000 x 3100): Warming up for 3.0000 s
 Warning: Unable to complete 100 samples in 5.0s. You may wish to increase target time to 31.7s, or reduce sample count to 10.
-bench_u32/u32 x u32 → u32 (200000 x 3100)
+bench_u32/u16 x u16 → u32 (200000 x 3100)
                         time:   [238.03 ms 240.90 ms 244.11 ms]
                         thrpt:  [81.930 Melem/s 83.023 Melem/s 84.024 Melem/s]
 Found 11 outliers among 100 measurements (11.00%)
@@ -417,64 +417,64 @@ bench_p16/p16 x p16 → p16 (200000 x 3100)
                         time:   [242.10 ms 242.43 ms 242.75 ms]
                         thrpt:  [82.389 Melem/s 82.497 Melem/s 82.609 Melem/s]
 
-Benchmarking bench_u32/u32 x u32 → u32 (200000 x 31): Wa
-Benchmarking bench_u32/u32 x u32 → u32 (200000 x 31): Collecting 100 samples in estimated 5.4258 s (400 iteratio
-Benchmarking bench_u32/u32 x u32 → u32 (200000 x 31): An
-bench_u32/u32 x u32 → u32 (200000 x 31)
+Benchmarking bench_u32/u16 x u16 → u32 (200000 x 31): Wa
+Benchmarking bench_u32/u16 x u16 → u32 (200000 x 31): Collecting 100 samples in estimated 5.4258 s (400 iteratio
+Benchmarking bench_u32/u16 x u16 → u32 (200000 x 31): An
+bench_u32/u16 x u16 → u32 (200000 x 31)
                         time:   [13.564 ms 13.569 ms 13.577 ms]
                         thrpt:  [14.731 Melem/s 14.739 Melem/s 14.745 Melem/s]
 Found 6 outliers among 100 measurements (6.00%)
   1 (1.00%) high mild
   5 (5.00%) high severe
-Benchmarking bench_u32/u32 x u32 → u32 (200000 x 155): W
-Benchmarking bench_u32/u32 x u32 → u32 (200000 x 155): Collecting 100 samples in estimated 5.1905 s (200 iterati
-Benchmarking bench_u32/u32 x u32 → u32 (200000 x 155): A
-bench_u32/u32 x u32 → u32 (200000 x 155)
+Benchmarking bench_u32/u16 x u16 → u32 (200000 x 155): W
+Benchmarking bench_u32/u16 x u16 → u32 (200000 x 155): Collecting 100 samples in estimated 5.1905 s (200 iterati
+Benchmarking bench_u32/u16 x u16 → u32 (200000 x 155): A
+bench_u32/u16 x u16 → u32 (200000 x 155)
                         time:   [25.656 ms 25.671 ms 25.687 ms]
                         thrpt:  [38.931 Melem/s 38.954 Melem/s 38.977 Melem/s]
 Found 1 outliers among 100 measurements (1.00%)
   1 (1.00%) high mild
-Benchmarking bench_u32/u32 x u32 → u32 (200000 x 310): W
-Benchmarking bench_u32/u32 x u32 → u32 (200000 x 310): Collecting 100 samples in estimated 8.4914 s (200 iterati
-Benchmarking bench_u32/u32 x u32 → u32 (200000 x 310): A
-bench_u32/u32 x u32 → u32 (200000 x 310)
+Benchmarking bench_u32/u16 x u16 → u32 (200000 x 310): W
+Benchmarking bench_u32/u16 x u16 → u32 (200000 x 310): Collecting 100 samples in estimated 8.4914 s (200 iterati
+Benchmarking bench_u32/u16 x u16 → u32 (200000 x 310): A
+bench_u32/u16 x u16 → u32 (200000 x 310)
                         time:   [41.877 ms 41.886 ms 41.896 ms]
                         thrpt:  [47.737 Melem/s 47.749 Melem/s 47.759 Melem/s]
 Found 2 outliers among 100 measurements (2.00%)
   2 (2.00%) high severe
-Benchmarking bench_u32/u32 x u32 → u32 (200000 x 620): Warming up for 3.0000 s
+Benchmarking bench_u32/u16 x u16 → u32 (200000 x 620): Warming up for 3.0000 s
 Warning: Unable to complete 100 samples in 5.0s. You may wish to increase target time to 7.6s, or reduce sample count to 60.
-Benchmarking bench_u32/u32 x u32 → u32 (200000 x 620): Collecting 100 samples in estimated 7.6141 s (100 iterati
-Benchmarking bench_u32/u32 x u32 → u32 (200000 x 620): A
-bench_u32/u32 x u32 → u32 (200000 x 620)
+Benchmarking bench_u32/u16 x u16 → u32 (200000 x 620): Collecting 100 samples in estimated 7.6141 s (100 iterati
+Benchmarking bench_u32/u16 x u16 → u32 (200000 x 620): A
+bench_u32/u16 x u16 → u32 (200000 x 620)
                         time:   [73.886 ms 73.908 ms 73.933 ms]
                         thrpt:  [54.103 Melem/s 54.121 Melem/s 54.138 Melem/s]
 Found 2 outliers among 100 measurements (2.00%)
   1 (1.00%) high mild
   1 (1.00%) high severe
-Benchmarking bench_u32/u32 x u32 → u32 (200000 x 930): Warming up for 3.0000 s
+Benchmarking bench_u32/u16 x u16 → u32 (200000 x 930): Warming up for 3.0000 s
 Warning: Unable to complete 100 samples in 5.0s. You may wish to increase target time to 11.7s, or reduce sample count to 40.
-Benchmarking bench_u32/u32 x u32 → u32 (200000 x 930): Collecting 100 samples in estimated 11.735 s (100 iterati
-Benchmarking bench_u32/u32 x u32 → u32 (200000 x 930): A
-bench_u32/u32 x u32 → u32 (200000 x 930)
+Benchmarking bench_u32/u16 x u16 → u32 (200000 x 930): Collecting 100 samples in estimated 11.735 s (100 iterati
+Benchmarking bench_u32/u16 x u16 → u32 (200000 x 930): A
+bench_u32/u16 x u16 → u32 (200000 x 930)
                         time:   [109.99 ms 110.02 ms 110.05 ms]
                         thrpt:  [54.520 Melem/s 54.536 Melem/s 54.550 Melem/s]
 Found 8 outliers among 100 measurements (8.00%)
   1 (1.00%) low mild
   4 (4.00%) high mild
   3 (3.00%) high severe
-Benchmarking bench_u32/u32 x u32 → u32 (200000 x 1550): Warming up for 3.0000 s
+Benchmarking bench_u32/u16 x u16 → u32 (200000 x 1550): Warming up for 3.0000 s
 Warning: Unable to complete 100 samples in 5.0s. You may wish to increase target time to 20.9s, or reduce sample count to 20.
-Benchmarking bench_u32/u32 x u32 → u32 (200000 x 1550): Collecting 100 samples in estimated 20.857 s (100 iterat
-Benchmarking bench_u32/u32 x u32 → u32 (200000 x 1550): 
-bench_u32/u32 x u32 → u32 (200000 x 1550)
+Benchmarking bench_u32/u16 x u16 → u32 (200000 x 1550): Collecting 100 samples in estimated 20.857 s (100 iterat
+Benchmarking bench_u32/u16 x u16 → u32 (200000 x 1550): 
+bench_u32/u16 x u16 → u32 (200000 x 1550)
                         time:   [184.75 ms 184.93 ms 185.10 ms]
                         thrpt:  [54.025 Melem/s 54.075 Melem/s 54.126 Melem/s]
-Benchmarking bench_u32/u32 x u32 → u32 (200000 x 3100): Warming up for 3.0000 s
+Benchmarking bench_u32/u16 x u16 → u32 (200000 x 3100): Warming up for 3.0000 s
 Warning: Unable to complete 100 samples in 5.0s. You may wish to increase target time to 47.1s, or reduce sample count to 10.
-Benchmarking bench_u32/u32 x u32 → u32 (200000 x 3100): Collecting 100 samples in estimated 47.068 s (100 iterat
-Benchmarking bench_u32/u32 x u32 → u32 (200000 x 3100): 
-bench_u32/u32 x u32 → u32 (200000 x 3100)
+Benchmarking bench_u32/u16 x u16 → u32 (200000 x 3100): Collecting 100 samples in estimated 47.068 s (100 iterat
+Benchmarking bench_u32/u16 x u16 → u32 (200000 x 3100): 
+bench_u32/u16 x u16 → u32 (200000 x 3100)
                         time:   [368.93 ms 369.32 ms 369.70 ms]
                         thrpt:  [54.098 Melem/s 54.153 Melem/s 54.211 Melem/s]
 
