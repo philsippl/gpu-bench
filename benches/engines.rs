@@ -149,6 +149,9 @@ fn bench_u14(c: &mut Criterion) {
             .collect::<Vec<_>>();
 
         let mut gpu_result = vec![0u16; DB_SIZE * query_size];
+        // unsafe {
+        //     cuMemAllocHost_v2(gpu_result.as_mut_ptr() as *mut _, DB_SIZE * query_size);
+        // }
 
         group.throughput(Throughput::Elements((DB_SIZE * query_size / 31) as u64));
         let mut engine =

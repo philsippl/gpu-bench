@@ -72,18 +72,19 @@ fn bench_memcpy_htod(c: &mut Criterion) {
 fn bench_memcpy_dtoh(c: &mut Criterion) {
     let mut group = c.benchmark_group("bench_memcpy");
     let dev = CudaDevice::new(0).unwrap();
+    const DB_SIZE: usize = 200_000;
 
-    for query_size in [1, 5, 10, 30, 50, 100, 1000] {
-        let data: CudaSlice<u8> = dev.alloc_zeros(query_size * 31 * WIDTH).unwrap();
-        let mut result = vec![0u8; query_size * 31 * WIDTH];
+    for query_size in [930] {
+        let data: CudaSlice<u8> = dev.alloc_zeros(query_size * DB_SIZE * 2).unwrap();
+        let mut result = vec![0u8; query_size * DB_SIZE * 2];
 
         unsafe {
-            cuMemAllocHost_v2(result.as_mut_ptr() as *mut _, query_size * 31 * WIDTH);
+            cuMemAllocHost_v2(result.as_mut_ptr() as *mut _, query_size * DB_SIZE * 2);
         }
 
-        group.throughput(Throughput::Bytes((query_size * 31 * WIDTH) as u64));
+        group.throughput(Throughput::Bytes((query_size * DB_SIZE * 2) as u64));
         group.bench_function(
-            format!("host to device memcpy ({} x {})", query_size, WIDTH),
+            format!("device to host memcpy ({} x {})", query_size, DB_SIZE),
             |b| {
                 b.iter(|| {
                     black_box(dev.dtoh_sync_copy_into(&data, &mut result).unwrap());
@@ -153,7 +154,7 @@ fn bench_gemm(c: &mut Criterion) {
 
     let db_dev = dev.htod_sync_copy(&db).unwrap();
 
-    for query_size in [50, 100, 1000, 10_000, 50_000] {
+    for query_size in [31, 32, 155, 310, 620, 930] {
         let query = (0..query_size * WIDTH)
             .map(|_| rng.gen::<u8>())
             .collect::<Vec<_>>();
@@ -187,5 +188,5 @@ fn bench_gemm(c: &mut Criterion) {
 }
 
 // criterion_group!(benches, bench_rowsum, bench_memcpy, bench_decomposition, bench_gemm);
-criterion_group!(benches, bench_memcpy_dtoh);
+criterion_group!(benches, bench_memcpy_dtoh, bench_gemm);
 criterion_main!(benches);

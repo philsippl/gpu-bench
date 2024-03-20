@@ -36,6 +36,6 @@ harness = false
 #name = "basics"
 #harness = false
 
-[[bench]]
-name = "cublas_u14"
-harness = false
+#[[bench]]
+#name = "cublas_u14"
+#harness = false
