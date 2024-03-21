@@ -58,6 +58,7 @@ def plot_benchmarks(benchmarks, output_file):
     plt.title('Matmul')
     plt.legend()
     plt.grid(True)
+    plt.ylim(ymin=0)
     plt.savefig(output_file, bbox_inches='tight')
 
 # Usage
