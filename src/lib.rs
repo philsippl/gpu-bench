@@ -12,7 +12,7 @@ use num_traits::FromPrimitive;
 const PTX_SRC: &str = "
 const long long INT_MAX = 4294967296;
 
-/// Perform multiplication of two u16 in u16 ring 
+/// Perform multiplication of two u16 in u16 ring
 extern \"C\" __global__ void matmul_u16(int* c, unsigned short* output, unsigned int* a0Sums, unsigned int* a1Sums, int* b0Sums, int* b1Sums, size_t numRows, size_t numElements, size_t numCols, unsigned short _p) {
     size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx < numElements) {
@@ -55,13 +55,13 @@ __global__ void matmul_u32_impl(int* c, T* output, unsigned int* a0Sums, unsigne
     }
 }
 
-/// Perform multiplication in 16bit field 
+/// Perform multiplication in 16bit field
 extern \"C\" __global__ void matmul_p16(int* c, unsigned short* output, unsigned int* a0Sums, unsigned int* a1Sums, int* b0Sums, int* b1Sums, size_t numRows, size_t numElements, size_t numCols, unsigned short p) {
     matmul_u32_impl<unsigned short>(c, output, a0Sums, a1Sums, b0Sums, b1Sums, numRows, numElements, numCols, static_cast<long long>(p));
 }
 
 /// Perform multiplication of two u16 in u32 ring
-extern \"C\" __global__ void matmul_u32(int* c, unsigned int* output, unsigned int* a0Sums, unsigned int* a1Sums, int* b0Sums, int* b1Sums, size_t numRows, size_t numElements, size_t numCols, unsigned short _p) {
+extern \"C\" __global__ void matmul_u16u32(int* c, unsigned int* output, unsigned int* a0Sums, unsigned int* a1Sums, int* b0Sums, int* b1Sums, size_t numRows, size_t numElements, size_t numCols, unsigned short _p) {
     matmul_u32_impl<unsigned int>(c, output, a0Sums, a1Sums, b0Sums, b1Sums, numRows, numElements, numCols, INT_MAX);
 }
 
@@ -90,6 +90,33 @@ extern \"C\" __global__ void matmul_u14(unsigned int* c, unsigned short* output,
     size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx < numElements) {
         output[idx] = (c[idx] + ((c[idx + numElements] + c[idx + numElements * 2]) << 7)) % 16384;
+    }
+}
+
+
+extern \"C\" __global__ void matmul_u32(int* c, unsigned int* output, unsigned int** aSums, int** bSums, size_t numRows, size_t numElements, size_t numCols) {
+    size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx < numElements) {
+        unsigned int as[4] = {};
+        unsigned int bs[4] = {};
+
+        for (int i=0;i<4;i++) {
+            as[i] = aSums[i][idx % numRows];
+            bs[i] = bSums[i][idx / numRows] + numCols * 128;
+        }
+
+        unsigned int result = 0;
+        for (int i=0;i<4;i++) {
+            for (int j=0;j<4;j++) {
+                if ((i+j) > 4) continue;
+                long long tmp = c[idx + numElements * (4 * i + j)] + ((as[i] + bs[j]) << 7);
+                tmp <<= 8 * (i + j);
+                result += tmp;
+            }
+        }
+
+        // Calculate the u16 result
+        output[idx] = result;
     }
 }
 ";
@@ -139,7 +166,7 @@ pub enum ComputeDataType {
     U32,
 }
 
-pub struct MatmulEngine<T> {
+pub struct MatmulEngineU16<T> {
     entry_size: usize,
     db_length: usize,
     query_length: usize,
@@ -184,7 +211,7 @@ where
         let function_name = match data_type {
             ComputeDataType::U16 => "matmul_u16",
             ComputeDataType::P16 => "matmul_p16",
-            ComputeDataType::U32 => "matmul_u32",
+            ComputeDataType::U32 => "matmul_u16u32",
             ComputeDataType::P14 => "matmul_p14",
             ComputeDataType::U14 => "matmul_u14",
             _ => todo!(),
@@ -299,7 +326,11 @@ where
         }
     }
 
-    pub fn dot(&mut self, preprocessed_query: &(Vec<u8>, Vec<u8>, Vec<u8>), results_host: &mut Vec<T>) {
+    pub fn dot(
+        &mut self,
+        preprocessed_query: &(Vec<u8>, Vec<u8>, Vec<u8>),
+        results_host: &mut Vec<T>,
+    ) {
         let (b1, b0, b01) = preprocessed_query;
 
         let b1_dev = self.dev.htod_sync_copy(&b1).unwrap();
@@ -446,7 +477,7 @@ where
         .unwrap();
 
         self.dev
-            .dtoh_sync_copy_into(&self.results,results_host)
+            .dtoh_sync_copy_into(&self.results, results_host)
             .unwrap();
     }
 
@@ -491,6 +522,186 @@ where
     }
 }
 
+/// U32
+
+pub struct MatmulEngineU32 {
+    entry_size: usize,
+    db_length: usize,
+    query_length: usize,
+    blas: CudaBlas,
+    dev: Arc<CudaDevice>,
+    db: Vec<CudaSlice<u8>>,
+    db_sums: Vec<CudaSlice<u32>>,
+    query_sums: Vec<CudaSlice<i32>>,
+    ones: CudaSlice<u8>,
+    intermediate_results: CudaSlice<i32>,
+    results: CudaSlice<T>,
+    function: CudaFunction,
+}
+
+impl MatmulEngineU32 {
+    pub fn create(db_entries: &[u32], entry_size: usize, query_length: usize) -> Self {
+        let db_length = db_entries.len() / entry_size;
+        // TODO: specify device id
+        let dev = CudaDevice::new(0).unwrap();
+        let blas = CudaBlas::new(dev.clone()).unwrap();
+
+        let ptx = compile_ptx(PTX_SRC).unwrap();
+        dev.load_ptx(ptx, function_name, &[function_name]).unwrap();
+        let function = dev.get_func(function_name, function_name).unwrap();
+
+        let db = [
+            vec![0u8; db_entries.len()],
+            vec![0u8; db_entries.len()],
+            vec![0u8; db_entries.len()],
+            vec![0u8; db_entries.len()],
+        ];
+
+        for (idx, entry) in db_entries.iter().enumerate() {
+            for i in 0..4 {
+                let tmp = (entry >> (i * 8)) as u8;
+                db[i][idx] = (tmp as i32 - 128) as u8;
+            }
+        }
+
+        let db_sums = db
+            .iter()
+            .map(|partial_db| {
+                partial_db
+                    .chunks(entry_size)
+                    .map(|row| row.iter().map(|&x| x as u32).sum())
+                    .collect()
+            })
+            .collect::<Vec<Vec<u32>>>();
+
+        let db = db
+            .iter()
+            .map(|partial_db| dev.htod_sync_copy(partial_db).unwrap())
+            .collect::<Vec<_>>();
+
+        let db_sums = db_sums
+            .iter()
+            .map(|partial_sum| dev.htod_sync_copy(partial_sum).unwrap())
+            .collect::<Vec<_>>();
+
+        let query_sums: Vec<CudaSlice<i32>> = (0..4)
+            .map(|_| dev.alloc_zeros(query_length).unwrap())
+            .collect();
+
+        let ones = vec![1u8; entry_size];
+        let ones = dev.htod_sync_copy(&ones).unwrap();
+
+        let results: CudaSlice<u32> = dev.alloc_zeros(db_length * query_length).unwrap();
+
+        let intermediate_results: CudaSlice<i32> =
+            dev.alloc_zeros(db_length * query_length * 16).unwrap();
+
+        MatmulEngine {
+            entry_size,
+            db_length,
+            query_length,
+            blas,
+            dev,
+            db,
+            db_sums,
+            query_sums,
+            ones,
+            results,
+            function,
+            intermediate_results,
+        }
+    }
+
+    pub fn preprocess_query(&self, query: &[u32]) -> Vec<Vec<u8>> {
+        let query = [
+            vec![0u8; query.len()],
+            vec![0u8; query.len()],
+            vec![0u8; query.len()],
+            vec![0u8; query.len()],
+        ];
+
+        for i in 0..4 {
+            let tmp = (entry >> (i * 8)) as u8;
+            query[i] = (tmp as i32 - 128) as u8;
+        }
+    }
+
+    pub fn dot(&mut self, preprocessed_query: Vec<Vec<u8>>, results_host: &mut Vec<u32>) {
+        let b_dev = preprocessed_query
+            .iter()
+            .map(|b| self.dev.htod_sync_copy(b).unwrap())
+            .collect::<Vec<_>>();
+
+        for i in 0..4 {
+            gemm(
+                &self.blas.handle(),
+                &b_dev[i],
+                &self.ones,
+                &mut self.query_sums[i],
+                0,
+                self.query_length,
+                1,
+                self.entry_size,
+            );
+        }
+
+        for i in 0..4 {
+            for j in 0..4 {
+                gemm(
+                    &self.blas.handle(),
+                    &self.db[i],
+                    &b_dev[j],
+                    &mut self.intermediate_results,
+                    (self.db_length * self.query_length * 4) * (i * 4 + j) as u64,
+                    self.db_length,
+                    self.query_length,
+                    self.entry_size,
+                );
+            }
+        }
+
+        let num_elements = self.db_length * self.query_length;
+        let threads_per_block = 256;
+        let blocks_per_grid = (num_elements + threads_per_block - 1) / threads_per_block;
+        let cfg = LaunchConfig {
+            block_dim: (threads_per_block as u32, 1, 1),
+            grid_dim: (blocks_per_grid as u32, 1, 1),
+            shared_mem_bytes: 0,
+        };
+
+        unsafe {
+            if self.data_type == ComputeDataType::U14 {
+                self.function.clone().launch(
+                    cfg,
+                    (
+                        &self.intermediate_results,
+                        &mut self.results,
+                        (self.db_length * self.query_length) as u64,
+                    ),
+                )
+            } else {
+                self.function.clone().launch(
+                    cfg,
+                    (
+                        &self.intermediate_results,
+                        &mut self.results,
+                        &self.db_sums,
+                        &self.query_sums,
+                        self.db_length as u64,
+                        (self.db_length * self.query_length) as u64,
+                        self.entry_size as u64,
+                    ),
+                )
+            }
+        }
+        .unwrap();
+
+        self.dev
+            .dtoh_sync_copy_into(&self.results, results_host)
+            .unwrap();
+    }
+}
+
 #[cfg(test)]
 /// Sanity checks for correctness
 mod tests {
@@ -498,7 +709,7 @@ mod tests {
     use num_traits::FromPrimitive;
     use rand::{rngs::StdRng, Rng, SeedableRng};
 
-    use crate::{ComputeDataType, MatmulEngine};
+    use crate::{ComputeDataType, MatmulEngine, MatmulEngineU32};
     const WIDTH: usize = 12_800;
     const QUERY_SIZE: usize = 31;
     const DB_SIZE: usize = 1000;
@@ -550,7 +761,8 @@ mod tests {
         }
 
         assert_eq!(
-            vec_column_major[0..10], gpu_result[0..10],
+            vec_column_major[0..10],
+            gpu_result[0..10],
             "GPU result does not match CPU implementation"
         );
     }
@@ -581,14 +793,15 @@ mod tests {
         }
 
         assert_eq!(
-            vec_column_major[0..10], gpu_result[0..10],
+            vec_column_major[0..10],
+            gpu_result[0..10],
             "GPU result does not match CPU implementation"
         );
     }
 
     #[test]
     /// u16 x u16 → u32
-    fn check_u32() {
+    fn check_u16u32() {
         let db = random_vec(DB_SIZE, WIDTH, 1 << 16);
         let query = random_vec(QUERY_SIZE, WIDTH, 1 << 16);
         let mut gpu_result = vec![0u32; DB_SIZE * QUERY_SIZE];
@@ -641,7 +854,8 @@ mod tests {
         }
 
         assert_eq!(
-            vec_column_major[0..10], gpu_result[0..10],
+            vec_column_major[0..10],
+            gpu_result[0..10],
             "GPU result does not match CPU implementation"
         );
     }
@@ -670,7 +884,37 @@ mod tests {
         }
 
         assert_eq!(
-            vec_column_major[0..10], gpu_result[0..10],
+            vec_column_major[0..10],
+            gpu_result[0..10],
+            "GPU result does not match CPU implementation"
+        );
+    }
+
+    #[test]
+    /// u32 x u32 → u32
+    fn check_u32() {
+        let mut rng = StdRng::seed_from_u64(RNG_SEED);
+        let db = (0..DB_SIZE * WIDTH).map(|_| rng.gen::<u32>()).collect();
+        let db = (0..QUERY_SIZE * WIDTH).map(|_| rng.gen::<u32>()).collect();
+        let mut gpu_result = vec![0u32; DB_SIZE * QUERY_SIZE];
+
+        let mut engine = MatmulEngineU32::create(&db, WIDTH, QUERY_SIZE);
+        let preprocessed_query = engine.preprocess_query(&query);
+        engine.dot(&preprocessed_query, &mut gpu_result);
+
+        let a_nda = random_ndarray::<u64>(db, DB_SIZE, WIDTH);
+        let b_nda = random_ndarray::<u64>(query, QUERY_SIZE, WIDTH);
+        let c_nda = a_nda.dot(&b_nda.t());
+
+        let mut vec_column_major: Vec<u32> = Vec::new();
+        for col in 0..c_nda.ncols() {
+            for row in c_nda.column(col) {
+                vec_column_major.push(*row as u32);
+            }
+        }
+
+        assert_eq!(
+            vec_column_major, gpu_result,
             "GPU result does not match CPU implementation"
         );
     }
