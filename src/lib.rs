@@ -635,7 +635,7 @@ impl MatmulEngineU32 {
         }
     }
 
-    pub fn preprocess_query(&self, query: &[u32]) -> [Vec<u8>; 4] {
+    pub fn preprocess_query(&self, query: &[u32]) -> Vec<Vec<u8>> {
         let mut result = [
             vec![0u8; query.len()],
             vec![0u8; query.len()],
@@ -650,10 +650,10 @@ impl MatmulEngineU32 {
             }
         }
 
-        result
+        result.to_vec()
     }
 
-    pub fn dot(&mut self, preprocessed_query: [Vec<u8>; 4], results_host: &mut Vec<u32>) {
+    pub fn dot(&mut self, preprocessed_query: &Vec<Vec<u8>>, results_host: &mut Vec<u32>) {
         let b_dev = preprocessed_query
             .iter()
             .map(|b| self.dev.htod_sync_copy(b).unwrap())
@@ -918,7 +918,7 @@ mod tests {
 
         let mut engine = MatmulEngineU32::create(&db, WIDTH, QUERY_SIZE);
         let preprocessed_query = engine.preprocess_query(&query);
-        engine.dot(preprocessed_query, &mut gpu_result);
+        engine.dot(&preprocessed_query, &mut gpu_result);
 
         let a_nda = Array2::from_shape_vec(
             (DB_SIZE as usize, WIDTH as usize),
