@@ -622,7 +622,7 @@ impl MatmulEngineU32 {
         let results: CudaSlice<u32> = dev.alloc_zeros(db_length * query_length).unwrap();
 
         let intermediate_results: CudaSlice<i32> =
-            dev.alloc_zeros(db_length * query_length * 13).unwrap();
+            dev.alloc_zeros(db_length * query_length * 14).unwrap(); // TODO
 
         MatmulEngineU32 {
             entry_size,
@@ -789,8 +789,8 @@ mod tests {
         }
 
         assert_eq!(
-            vec_column_major[0..10],
-            gpu_result[0..10],
+            vec_column_major,
+            gpu_result,
             "GPU result does not match CPU implementation"
         );
     }
@@ -821,8 +821,8 @@ mod tests {
         }
 
         assert_eq!(
-            vec_column_major[0..10],
-            gpu_result[0..10],
+            vec_column_major,
+            gpu_result,
             "GPU result does not match CPU implementation"
         );
     }
@@ -882,8 +882,8 @@ mod tests {
         }
 
         assert_eq!(
-            vec_column_major[0..10],
-            gpu_result[0..10],
+            vec_column_major,
+            gpu_result,
             "GPU result does not match CPU implementation"
         );
     }
@@ -912,8 +912,8 @@ mod tests {
         }
 
         assert_eq!(
-            vec_column_major[0..10],
-            gpu_result[0..10],
+            vec_column_major,
+            gpu_result,
             "GPU result does not match CPU implementation"
         );
     }
@@ -956,8 +956,8 @@ mod tests {
         }
 
         assert_eq!(
-            vec_column_major[0..10],
-            gpu_result[0..10],
+            vec_column_major,
+            gpu_result,
             "GPU result does not match CPU implementation"
         );
     }
