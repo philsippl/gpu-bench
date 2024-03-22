@@ -44,7 +44,14 @@ def load_benchmarks(benchmark_dirs):
             benchmarks[bench_name] = {"x": [], "y": []}
         benchmarks[bench_name]["y"].append(1/(mean_estimate/elements/1e9)/1e6)
         benchmarks[bench_name]["x"].append(batch_size/31)
+
         print(1/(mean_estimate/elements/1e9))
+
+    for bench_name, data in benchmarks.items():
+        sorted_pairs = sorted(zip(data["x"], data["y"]), key=lambda pair: pair[0])
+        data["x"], data["y"] = zip(*sorted_pairs)
+        data["x"], data["y"] = list(data["x"]), list(data["y"]) 
+
     return benchmarks
 
 def plot_benchmarks(benchmarks, output_file):
