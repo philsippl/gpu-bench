@@ -390,7 +390,8 @@ where
                 &self.db1,
                 &b1_dev,
                 &mut self.intermediate_results,
-                0,0,
+                0,
+                0,
                 (self.db_length * self.query_length * 4 * 1) as u64,
                 self.db_length,
                 self.query_length,
@@ -404,7 +405,8 @@ where
                 &self.db01,
                 &b01_dev,
                 &mut self.intermediate_results,
-                0,0,
+                0,
+                0,
                 (self.db_length * self.query_length * 4 * 2) as u64,
                 self.db_length,
                 self.query_length,
@@ -417,7 +419,8 @@ where
                 &self.db0,
                 &b1_dev,
                 &mut self.intermediate_results,
-                0,0,
+                0,
+                0,
                 (self.db_length * self.query_length * 4 * 1) as u64,
                 self.db_length,
                 self.query_length,
@@ -429,7 +432,8 @@ where
                 &self.db1,
                 &b0_dev,
                 &mut self.intermediate_results,
-                0,0,
+                0,
+                0,
                 (self.db_length * self.query_length * 4 * 2) as u64,
                 self.db_length,
                 self.query_length,
@@ -443,7 +447,8 @@ where
                     &self.db1,
                     &b1_dev,
                     &mut self.intermediate_results,
-                    0,0,
+                    0,
+                    0,
                     (self.db_length * self.query_length * 4 * 3) as u64,
                     self.db_length,
                     self.query_length,
@@ -608,8 +613,8 @@ impl MatmulEngineU32 {
             .map(|partial_db| dev.htod_sync_copy(partial_db).unwrap())
             .collect::<Vec<_>>();
 
-        let db_sums =  dev.htod_sync_copy(&db_sums_merged).unwrap();
-        let query_sums: CudaSlice<i32> =  dev.alloc_zeros(query_length * 4).unwrap();
+        let db_sums = dev.htod_sync_copy(&db_sums_merged).unwrap();
+        let query_sums: CudaSlice<i32> = dev.alloc_zeros(query_length * 4).unwrap();
 
         let ones = vec![1u8; entry_size];
         let ones = dev.htod_sync_copy(&ones).unwrap();
@@ -617,7 +622,7 @@ impl MatmulEngineU32 {
         let results: CudaSlice<u32> = dev.alloc_zeros(db_length * query_length).unwrap();
 
         let intermediate_results: CudaSlice<i32> =
-            dev.alloc_zeros(db_length * query_length * 16).unwrap();
+            dev.alloc_zeros(db_length * query_length * 13).unwrap();
 
         MatmulEngineU32 {
             entry_size,
@@ -665,7 +670,8 @@ impl MatmulEngineU32 {
                 &b_dev[i],
                 &self.ones,
                 &mut self.query_sums,
-                0,0,
+                0,
+                0,
                 (i * self.query_length * 4) as u64,
                 self.query_length,
                 1,
@@ -675,12 +681,16 @@ impl MatmulEngineU32 {
 
         for i in 0..4 {
             for j in 0..4 {
+                if i + j > 4 {
+                    continue;
+                }
                 gemm(
                     &self.blas.handle(),
                     &self.db[i],
                     &b_dev[j],
                     &mut self.intermediate_results,
-                    0,0,
+                    0,
+                    0,
                     ((self.db_length * self.query_length * 4) * (i * 4 + j)) as u64,
                     self.db_length,
                     self.query_length,
@@ -912,8 +922,12 @@ mod tests {
     /// u32 x u32 → u32
     fn check_u32() {
         let mut rng = StdRng::seed_from_u64(RNG_SEED);
-        let db = (0..DB_SIZE * WIDTH).map(|_| rng.gen::<u32>()).collect::<Vec<_>>();
-        let query = (0..QUERY_SIZE * WIDTH).map(|_| rng.gen::<u32>()).collect::<Vec<_>>();
+        let db = (0..DB_SIZE * WIDTH)
+            .map(|_| rng.gen::<u32>())
+            .collect::<Vec<_>>();
+        let query = (0..QUERY_SIZE * WIDTH)
+            .map(|_| rng.gen::<u32>())
+            .collect::<Vec<_>>();
         let mut gpu_result = vec![0u32; DB_SIZE * QUERY_SIZE];
 
         let mut engine = MatmulEngineU32::create(&db, WIDTH, QUERY_SIZE);
@@ -922,19 +936,13 @@ mod tests {
 
         let a_nda = Array2::from_shape_vec(
             (DB_SIZE as usize, WIDTH as usize),
-            db
-                .into_iter()
-                .map(|x| x as u64)
-                .collect::<Vec<_>>(),
+            db.into_iter().map(|x| x as u64).collect::<Vec<_>>(),
         )
         .unwrap();
 
         let b_nda = Array2::from_shape_vec(
             (QUERY_SIZE as usize, WIDTH as usize),
-            query
-                .into_iter()
-                .map(|x| x as u64)
-                .collect::<Vec<_>>(),
+            query.into_iter().map(|x| x as u64).collect::<Vec<_>>(),
         )
         .unwrap();
 
@@ -948,7 +956,8 @@ mod tests {
         }
 
         assert_eq!(
-            vec_column_major[0..10], gpu_result[0..10],
+            vec_column_major[0..10],
+            gpu_result[0..10],
             "GPU result does not match CPU implementation"
         );
     }
