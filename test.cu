@@ -5,26 +5,6 @@
 #include <cstdlib> 
 #include <ctime>
 
-#define CHECK_CUDA(call) \
-    do { \
-        const cudaError_t error = call; \
-        if (error != cudaSuccess) { \
-            std::cerr << "Error: " << __FILE__ << ":" << __LINE__ << ", " \
-                      << cudaGetErrorString(error) << std::endl; \
-            exit(1); \
-        } \
-    } while (0)
-
-#define CHECK_CUBLAS(status) \
-    do { \
-        const cublasStatus_t error = status; \
-        if (error != CUBLAS_STATUS_SUCCESS) { \
-            std::cerr << "cuBLAS Error: " << __FILE__ << ":" << __LINE__ << ", " \
-                      << error << std::endl; \
-            exit(1); \
-        } \
-    } while (0)
-
 // Simple CPU-based matrix multiplication for verification
 void simpleCpuGemm(int m, int n, int k, const int8_t *A, const int8_t *B, int32_t *C) {
     for (int row = 0; row < m; ++row) {
@@ -39,14 +19,12 @@ void simpleCpuGemm(int m, int n, int k, const int8_t *A, const int8_t *B, int32_
 }
 
 int main() {
-    // Initialize cuBLAS
     cublasHandle_t handle;
-    CHECK_CUBLAS(cublasCreate(&handle));
+    cublasCreate(&handle);
 
-    int m = 100, n = 32, k = 100;
+    int m = 100, n = 32, k = 12800;
     std::srand(std::time(0));
 
-    // Allocate and initialize host matrices
     std::vector<int8_t> h_A(m * k);
     std::vector<int8_t> h_B(k * n);
     std::vector<int8_t> h_B_transposed(n * k);
@@ -63,47 +41,45 @@ int main() {
 
     int8_t *A, *B;
     int32_t *C; // Assuming the result matrix C is int32
-    CHECK_CUDA(cudaMalloc(&A, m * k * sizeof(int8_t)));
-    CHECK_CUDA(cudaMalloc(&B, k * n * sizeof(int8_t)));
-    CHECK_CUDA(cudaMalloc(&C, m * n * sizeof(int32_t)));
+    cudaMalloc(&A, m * k * sizeof(int8_t));
+    cudaMalloc(&B, k * n * sizeof(int8_t));
+    cudaMalloc(&C, m * n * sizeof(int32_t));
 
     // Copy matrices A and B to the device
-    CHECK_CUDA(cudaMemcpy(A, h_A.data(), m * k * sizeof(int8_t), cudaMemcpyHostToDevice));
-    CHECK_CUDA(cudaMemcpy(B, h_B.data(), k * n * sizeof(int8_t), cudaMemcpyHostToDevice));
+    cudaMemcpy(A, h_A.data(), m * k * sizeof(int8_t), cudaMemcpyHostToDevice);
+    cudaMemcpy(B, h_B.data(), k * n * sizeof(int8_t), cudaMemcpyHostToDevice);
 
     const int32_t alpha = 1;
     const int32_t beta = 0;
     // Perform the matrix multiplication using cublasGemmEx
-    CHECK_CUBLAS(cublasGemmEx(handle, CUBLAS_OP_T, CUBLAS_OP_N,
+    cublasGemmEx(handle, CUBLAS_OP_T, CUBLAS_OP_N,
                               m, n, k,
                               &alpha,
                               A, CUDA_R_8I, k,
                               B, CUDA_R_8I, k,
                               &beta,
                               C, CUDA_R_32I, m,
-                              CUBLAS_COMPUTE_32I_PEDANTIC, CUBLAS_GEMM_DEFAULT));
+                              CUBLAS_COMPUTE_32I_PEDANTIC, CUBLAS_GEMM_DEFAULT);
 
-    CHECK_CUDA(cudaMemcpy(h_C.data(), C, m * n * sizeof(int32_t), cudaMemcpyDeviceToHost));
+    cudaMemcpy(h_C.data(), C, m * n * sizeof(int32_t), cudaMemcpyDeviceToHost);
 
     // Perform the CPU-based matrix multiplication for verification
     simpleCpuGemm(m, n, k, h_A.data(), h_B.data(), h_C_cpu.data());
 
     // Compare the results (CUDA vs. CPU)
-    bool resultsMatch = true;
+    int diffs = 0;
     for (int i = 0; i < m * n; ++i) {
         if (h_C_cpu[i] != h_C[i]) {
             std::cout << h_C_cpu[i] << " " << h_C[i] << " " << i << "\n";
-            resultsMatch = false;
-            break;
+            diffs++;
         }
     }
-    std::cout << "The results " << (resultsMatch ? "MATCH" : "DO NOT MATCH") << "!\n";
+    std::cout << "The results " << (diffs == 0 ? "MATCH" : "DO NOT MATCH") << ": " << diffs << " values differ\n";
 
-    // Clean up resources
-    CHECK_CUDA(cudaFree(A));
-    CHECK_CUDA(cudaFree(B));
-    CHECK_CUDA(cudaFree(C));
-    CHECK_CUBLAS(cublasDestroy(handle));
+    cudaFree(A);
+    cudaFree(B);
+    cudaFree(C);
+    cublasDestroy(handle);
 
     return 0;
 }
