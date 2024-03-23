@@ -1,7 +1,9 @@
+use std::os::raw::c_void;
+
 use criterion::{black_box, criterion_group, criterion_main, Criterion, Throughput};
 use cudarc::cublas::CudaBlas;
-use cudarc::driver::sys::cuMemAllocHost_v2;
-use cudarc::driver::{CudaDevice, CudaSlice};
+use cudarc::driver::sys::{cuMemAllocHost_v2, cuMemcpyDtoH_v2};
+use cudarc::driver::{CudaDevice, CudaSlice, DevicePtr};
 use rand::{rngs::StdRng, Rng, SeedableRng};
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use rayon::prelude::ParallelSlice;
@@ -74,20 +76,31 @@ fn bench_memcpy_dtoh(c: &mut Criterion) {
     let dev = CudaDevice::new(0).unwrap();
     const DB_SIZE: usize = 200_000;
 
-    for query_size in [930] {
+    for query_size in [930, 1000] {
         let data: CudaSlice<u8> = dev.alloc_zeros(query_size * DB_SIZE * 2).unwrap();
         let mut result = vec![0u8; query_size * DB_SIZE * 2];
-
         unsafe {
             cuMemAllocHost_v2(result.as_mut_ptr() as *mut _, query_size * DB_SIZE * 2);
         }
 
+
+        // let mut c_host_ptr: *mut c_void = std::ptr::null_mut();
+        // unsafe {
+        //     let _ = cuMemAllocHost_v2(&mut c_host_ptr, query_size * DB_SIZE * 2);
+        // }
+    //
+    // unsafe {
+    //     let _ = cuMemcpyDtoH_v2(c_host_ptr, *c_dev.device_ptr(), bytesize);
+    // }
         group.throughput(Throughput::Bytes((query_size * DB_SIZE * 2) as u64));
         group.bench_function(
             format!("device to host memcpy ({} x {})", query_size, DB_SIZE),
             |b| {
                 b.iter(|| {
                     black_box(dev.dtoh_sync_copy_into(&data, &mut result).unwrap());
+                    // unsafe {
+                    //     let _ = cuMemcpyDtoH_v2(c_host_ptr, *data.device_ptr(), query_size * DB_SIZE * 2);
+                    // }
                 });
             },
         );
@@ -188,5 +201,5 @@ fn bench_gemm(c: &mut Criterion) {
 }
 
 // criterion_group!(benches, bench_rowsum, bench_memcpy, bench_decomposition, bench_gemm);
-criterion_group!(benches, bench_memcpy_dtoh, bench_gemm);
+criterion_group!(benches, bench_memcpy_dtoh);
 criterion_main!(benches);
