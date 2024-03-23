@@ -5,7 +5,7 @@
 #include <cstdlib>
 #include <ctime>
 
-// Simple CPU-based matrix multiplication for verification
+// Basic CPU impl
 void simpleCpuGemm(int m, int n, int k, const int8_t *A, const int8_t *B, int32_t *C)
 {
     for (int row = 0; row < m; ++row)
@@ -34,7 +34,7 @@ int main()
     std::vector<int8_t> h_B(k * n);
     std::vector<int8_t> h_B_transposed(n * k);
     std::vector<int32_t> h_C(m * n);
-    std::vector<int32_t> h_C_cpu(m * n); // For CPU result
+    std::vector<int32_t> h_C_cpu(m * n);
     std::vector<int32_t> h_C_cpu_transposed(m * n);
 
     for (int i = 0; i < m * k; ++i)
@@ -47,18 +47,18 @@ int main()
     }
 
     int8_t *A, *B;
-    int32_t *C; // Assuming the result matrix C is int32
+    int32_t *C;
     cudaMalloc(&A, m * k * sizeof(int8_t));
     cudaMalloc(&B, k * n * sizeof(int8_t));
     cudaMalloc(&C, m * n * sizeof(int32_t));
 
-    // Copy matrices A and B to the device
     cudaMemcpy(A, h_A.data(), m * k * sizeof(int8_t), cudaMemcpyHostToDevice);
     cudaMemcpy(B, h_B.data(), k * n * sizeof(int8_t), cudaMemcpyHostToDevice);
 
     const int32_t alpha = 1;
     const int32_t beta = 0;
-    // Perform the matrix multiplication using cublasGemmEx
+
+    // Matmul using cublasGemmEx
     cublasGemmEx(handle, CUBLAS_OP_T, CUBLAS_OP_N,
                  m, n, k,
                  &alpha,
@@ -70,10 +70,10 @@ int main()
 
     cudaMemcpy(h_C.data(), C, m * n * sizeof(int32_t), cudaMemcpyDeviceToHost);
 
-    // Perform the CPU-based matrix multiplication for verification
+    // CPU sanity check
     simpleCpuGemm(m, n, k, h_A.data(), h_B.data(), h_C_cpu.data());
 
-    // Compare the results (CUDA vs. CPU)
+    // Compare the results 
     int diffs = 0;
     for (int i = 0; i < m * n; ++i)
     {
