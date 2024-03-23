@@ -2,15 +2,19 @@
 #include <cuda_runtime.h>
 #include <iostream>
 #include <vector>
-#include <cstdlib> 
+#include <cstdlib>
 #include <ctime>
 
 // Simple CPU-based matrix multiplication for verification
-void simpleCpuGemm(int m, int n, int k, const int8_t *A, const int8_t *B, int32_t *C) {
-    for (int row = 0; row < m; ++row) {
-        for (int col = 0; col < n; ++col) {
+void simpleCpuGemm(int m, int n, int k, const int8_t *A, const int8_t *B, int32_t *C)
+{
+    for (int row = 0; row < m; ++row)
+    {
+        for (int col = 0; col < n; ++col)
+        {
             int32_t sum = 0;
-            for (int i = 0; i < k; ++i) {
+            for (int i = 0; i < k; ++i)
+            {
                 sum += A[i + row * k] * B[i + col * k];
             }
             C[row + col * m] = sum;
@@ -18,7 +22,8 @@ void simpleCpuGemm(int m, int n, int k, const int8_t *A, const int8_t *B, int32_
     }
 }
 
-int main() {
+int main()
+{
     cublasHandle_t handle;
     cublasCreate(&handle);
 
@@ -32,10 +37,12 @@ int main() {
     std::vector<int32_t> h_C_cpu(m * n); // For CPU result
     std::vector<int32_t> h_C_cpu_transposed(m * n);
 
-    for (int i = 0; i < m * k; ++i) {
+    for (int i = 0; i < m * k; ++i)
+    {
         h_A[i] = static_cast<int8_t>(std::rand() % 127);
     }
-    for (int i = 0; i < k * n; ++i) {
+    for (int i = 0; i < k * n; ++i)
+    {
         h_B[i] = static_cast<int8_t>(std::rand() % 127);
     }
 
@@ -53,13 +60,13 @@ int main() {
     const int32_t beta = 0;
     // Perform the matrix multiplication using cublasGemmEx
     cublasGemmEx(handle, CUBLAS_OP_T, CUBLAS_OP_N,
-                              m, n, k,
-                              &alpha,
-                              A, CUDA_R_8I, k,
-                              B, CUDA_R_8I, k,
-                              &beta,
-                              C, CUDA_R_32I, m,
-                              CUBLAS_COMPUTE_32I_PEDANTIC, CUBLAS_GEMM_DEFAULT);
+                 m, n, k,
+                 &alpha,
+                 A, CUDA_R_8I, k,
+                 B, CUDA_R_8I, k,
+                 &beta,
+                 C, CUDA_R_32I, m,
+                 CUBLAS_COMPUTE_32I_PEDANTIC, CUBLAS_GEMM_DEFAULT);
 
     cudaMemcpy(h_C.data(), C, m * n * sizeof(int32_t), cudaMemcpyDeviceToHost);
 
@@ -68,13 +75,15 @@ int main() {
 
     // Compare the results (CUDA vs. CPU)
     int diffs = 0;
-    for (int i = 0; i < m * n; ++i) {
-        if (h_C_cpu[i] != h_C[i]) {
+    for (int i = 0; i < m * n; ++i)
+    {
+        if (h_C_cpu[i] != h_C[i])
+        {
             std::cout << h_C_cpu[i] << " " << h_C[i] << " " << i << "\n";
             diffs++;
         }
     }
-    std::cout << "The results " << (diffs == 0 ? "MATCH" : "DO NOT MATCH") << ": " << diffs << " values differ\n";
+    std::cout << "The results " << (diffs == 0 ? "MATCH" : "DO NOT MATCH") << ": " << diffs << " out of " << n * m << " values differ\n";
 
     cudaFree(A);
     cudaFree(B);
@@ -83,5 +92,3 @@ int main() {
 
     return 0;
 }
-
-
