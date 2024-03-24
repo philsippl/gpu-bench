@@ -4,6 +4,7 @@ use rand::{rngs::StdRng, Rng, SeedableRng};
 
 const WIDTH: usize = 12_800;
 const DB_SIZE: usize = 100_000;
+const CHUNK_SIZE: usize = 25_000;
 const RNG_SEED: u64 = 40;
 const QUERY_SIZES: &[usize] = &[31, 155, 310, 620, 930, 1550, 2170];
 
@@ -188,7 +189,7 @@ fn bench_u32(c: &mut Criterion) {
 
         group.throughput(Throughput::Elements((DB_SIZE * query_size / 31) as u64));
         let mut engine =
-            MatmulEngineU32::create(&db, WIDTH, query_size);
+            MatmulEngineU32::create(&db, WIDTH, query_size, CHUNK_SIZE);
         let preprocessed_query = engine.preprocess_query(&query);
 
         group.bench_function(
@@ -202,6 +203,6 @@ fn bench_u32(c: &mut Criterion) {
     }
 }
 
-criterion_group!(benches, bench_u16, bench_p16, bench_u16u32, bench_p14, bench_u14, bench_u32);
-// criterion_group!(benches, bench_u32);
+// criterion_group!(benches, bench_u16, bench_p16, bench_u16u32, bench_p14, bench_u14, bench_u32);
+criterion_group!(benches, bench_u32);
 criterion_main!(benches);
