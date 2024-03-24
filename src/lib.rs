@@ -9,6 +9,7 @@ use cudarc::{
 };
 use num_traits::FromPrimitive;
 
+const CHUNK_SIZE: usize = 10_000;
 const PTX_SRC: &str = "
 const long long INT_MAX = 4294967296;
 
@@ -94,8 +95,8 @@ extern \"C\" __global__ void matmul_u14(unsigned int* c, unsigned short* output,
 }
 
 
-extern \"C\" __global__ void matmul_u32(int* c, unsigned int* output, unsigned int* aSums, int* bSums, size_t n, size_t m, size_t k) {
-    size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
+extern \"C\" __global__ void matmul_u32(int* c, unsigned int* output, unsigned int* aSums, int* bSums, size_t n, size_t m, size_t k, size_t offset) {
+    size_t idx = blockIdx.x * blockDim.x + threadIdx.x + offset;
     size_t numElements = n * m;
 
     if (idx < numElements) {
@@ -658,7 +659,7 @@ impl MatmulEngineU32 {
         result.to_vec()
     }
 
-    pub fn dot(&mut self, preprocessed_query: &Vec<Vec<u8>>, results_host: &mut Vec<u32>) {
+    pub fn dot(&mut self, preprocessed_query: &Vec<Vec<u8>>, results_host: *mut c_void) {
         let b_dev = preprocessed_query
             .iter()
             .map(|b| self.dev.htod_sync_copy(b).unwrap())
@@ -679,54 +680,57 @@ impl MatmulEngineU32 {
             );
         }
 
-        for i in 0..4 {
-            for j in 0..4 {
-                if i + j > 4 {
-                    continue;
+        for chunk_idx in 0..DB_SIZE / CHUNK_SIZE {
+            for i in 0..4 {
+                for j in 0..4 {
+                    if i + j > 4 {
+                        continue;
+                    }
+                    gemm(
+                        &self.blas.handle(),
+                        &self.db[i],
+                        &b_dev[j],
+                        &mut self.intermediate_results,
+                        (chunk_idx * CHUNK_SIZE * 4) as u64,
+                        0,
+                        ((self.db_length * self.query_length * 4) * (i * 4 + j)) as u64,
+                        self.db_length,
+                        self.query_length,
+                        self.entry_size,
+                    );
                 }
-                gemm(
-                    &self.blas.handle(),
-                    &self.db[i],
-                    &b_dev[j],
-                    &mut self.intermediate_results,
-                    0,
-                    0,
-                    ((self.db_length * self.query_length * 4) * (i * 4 + j)) as u64,
-                    self.db_length,
-                    self.query_length,
-                    self.entry_size,
-                );
             }
-        }
 
-        let num_elements = self.db_length * self.query_length;
-        let threads_per_block = 256;
-        let blocks_per_grid = (num_elements + threads_per_block - 1) / threads_per_block;
-        let cfg = LaunchConfig {
-            block_dim: (threads_per_block as u32, 1, 1),
-            grid_dim: (blocks_per_grid as u32, 1, 1),
-            shared_mem_bytes: 0,
-        };
+            let num_elements = self.db_length * self.query_length;
+            let threads_per_block = 256;
+            let blocks_per_grid = (num_elements + threads_per_block - 1) / threads_per_block;
+            let cfg = LaunchConfig {
+                block_dim: (threads_per_block as u32, 1, 1),
+                grid_dim: (blocks_per_grid as u32, 1, 1),
+                shared_mem_bytes: 0,
+            };
 
-        unsafe {
-            self.function.clone().launch(
-                cfg,
-                (
-                    &self.intermediate_results,
-                    &mut self.results,
-                    &self.db_sums,
-                    &self.query_sums,
-                    self.db_length as u64,
-                    self.query_length as u64,
-                    self.entry_size as u64,
-                ),
-            )
-        }
-        .unwrap();
-
-        self.dev
-            .dtoh_sync_copy_into(&self.results, results_host)
+            unsafe {
+                self.function.clone().launch(
+                    cfg,
+                    (
+                        &self.intermediate_results,
+                        &mut self.results,
+                        &self.db_sums,
+                        &self.query_sums,
+                        self.db_length as u64,
+                        self.query_length as u64,
+                        self.entry_size as u64,
+                        i * CHUNK_SIZE as u64,
+                    ),
+                )
+            }
             .unwrap();
+
+            self.dev
+                .dtoh_sync_copy_into(&self.results, results_host)
+                .unwrap();
+        }
     }
 }
 
@@ -789,8 +793,7 @@ mod tests {
         }
 
         assert_eq!(
-            vec_column_major,
-            gpu_result,
+            vec_column_major, gpu_result,
             "GPU result does not match CPU implementation"
         );
     }
@@ -821,8 +824,7 @@ mod tests {
         }
 
         assert_eq!(
-            vec_column_major,
-            gpu_result,
+            vec_column_major, gpu_result,
             "GPU result does not match CPU implementation"
         );
     }
@@ -882,8 +884,7 @@ mod tests {
         }
 
         assert_eq!(
-            vec_column_major,
-            gpu_result,
+            vec_column_major, gpu_result,
             "GPU result does not match CPU implementation"
         );
     }
@@ -912,8 +913,7 @@ mod tests {
         }
 
         assert_eq!(
-            vec_column_major,
-            gpu_result,
+            vec_column_major, gpu_result,
             "GPU result does not match CPU implementation"
         );
     }
@@ -956,8 +956,7 @@ mod tests {
         }
 
         assert_eq!(
-            vec_column_major,
-            gpu_result,
+            vec_column_major, gpu_result,
             "GPU result does not match CPU implementation"
         );
     }
