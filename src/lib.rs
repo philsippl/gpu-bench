@@ -4,8 +4,8 @@ use std::{ffi::c_void, sync::Arc, time::Instant};
 use cudarc::{
     cublas::{result::gemm_ex, sys, CudaBlas},
     driver::{
-        sys::{cuMemAllocHost_v2, cuMemcpyDtoHAsync_v2, cuMemcpyDtoH_v2}, CudaDevice, CudaFunction, CudaSlice, DevicePtr, DevicePtrMut,
-        LaunchAsync, LaunchConfig,
+        sys::{cuMemAllocHost_v2, cuMemcpyDtoHAsync_v2, cuMemcpyDtoH_v2},
+        CudaDevice, CudaFunction, CudaSlice, DevicePtr, DevicePtrMut, LaunchAsync, LaunchConfig,
     },
     nvrtc::compile_ptx,
 };
@@ -563,7 +563,12 @@ pub struct MatmulEngineU32 {
 }
 
 impl MatmulEngineU32 {
-    pub fn create(db_entries: &[u32], entry_size: usize, query_length: usize, chunk_size: usize) -> Self {
+    pub fn create(
+        db_entries: &[u32],
+        entry_size: usize,
+        query_length: usize,
+        chunk_size: usize,
+    ) -> Self {
         let db_length = db_entries.len() / entry_size;
         // TODO: specify device id
         let dev = CudaDevice::new(0).unwrap();
@@ -663,11 +668,12 @@ impl MatmulEngineU32 {
     }
 
     pub fn dot(&mut self, preprocessed_query: &Vec<Vec<u8>>, results_host: *mut u32) {
-
         // let mut results_host_ptr: *mut c_void = std::ptr::null_mut();
         // unsafe {
         //     let _ = cuMemAllocHost_v2(&mut results_host_ptr, results_host.len() * 4);
         // }
+
+        let dummy: CudaSlice<u8> = self.dev.alloc_zeros(1).unwrap();
 
         let b_dev = preprocessed_query
             .iter()
@@ -689,16 +695,27 @@ impl MatmulEngineU32 {
             );
         }
 
+        let mut blass = vec![];
         let mut streams = vec![];
 
-        for chunk_idx in 0..self.db_length / self.chunk_size {
-            // let now = Instant::now();
+        for _ in 0..self.db_length / self.chunk_size {
             let stream = self.dev.fork_default_stream().unwrap();
             let mut blas = CudaBlas::new(self.dev.clone()).unwrap();
             unsafe {
                 blas.set_stream(Some(&stream));
             }
-            // println!("{:?}", now.elapsed());
+            blass.push(blas);
+            streams.push(stream);
+        }
+
+        for chunk_idx in 0..self.db_length / self.chunk_size {
+            // let now = Instant::now();
+            // let stream = self.dev.fork_default_stream().unwrap();
+            // let mut blas = CudaBlas::new(self.dev.clone()).unwrap();
+            // unsafe {
+            //     blas.set_stream(Some(&stream));
+            // }
+            // println!("xxx {:?}", now.elapsed());
 
             for i in 0..4 {
                 for j in 0..4 {
@@ -706,7 +723,7 @@ impl MatmulEngineU32 {
                         continue;
                     }
                     gemm(
-                        blas.handle(),
+                        blass[chunk_idx].handle(),
                         &self.db[i],
                         &b_dev[j],
                         &mut self.intermediate_results,
@@ -732,7 +749,7 @@ impl MatmulEngineU32 {
 
             unsafe {
                 self.function.clone().launch_on_stream(
-                    &stream,
+                    &streams[chunk_idx],
                     cfg,
                     (
                         &self.intermediate_results,
@@ -748,7 +765,6 @@ impl MatmulEngineU32 {
             }
             .unwrap();
 
-
             // let now = Instant::now();
             unsafe {
                 // let tmp_ptr: *mut c_void = results_host.as_mut_ptr() as *mut _;
@@ -756,19 +772,25 @@ impl MatmulEngineU32 {
                     (results_host.wrapping_add(self.chunk_size * chunk_idx * 4)) as *mut c_void,
                     *self.results.device_ptr() + (self.chunk_size * chunk_idx * 4) as u64,
                     self.query_length * self.chunk_size * 4,
-                    stream.stream,
+                    streams[chunk_idx].stream,
                 );
             }
             // println!("{:?}", now.elapsed());
-            streams.push(stream);
+            // streams.push(stream);
             // self.dev.synchronize().unwrap();
         }
 
         self.dev.synchronize();
 
+        // let now = Instant::now();
         for stream in streams {
             self.dev.wait_for(&stream).unwrap();
         }
+
+        let mut xx = vec![0u8;1];
+        self.dev.dtoh_sync_copy_into(&dummy, &mut xx);
+
+        // println!("{:?}", now.elapsed());
 
         // let v: Vec<u32> = unsafe {
         //     let results_host_ptr = results_host_ptr as *mut u32;
@@ -786,6 +808,10 @@ impl MatmulEngineU32 {
 #[cfg(test)]
 /// Sanity checks for correctness
 mod tests {
+    use core::slice;
+    use std::{ffi::c_void};
+
+    use cudarc::driver::sys::cuMemAllocHost_v2;
     use ndarray::Array2;
     use num_traits::FromPrimitive;
     use rand::{rngs::StdRng, Rng, SeedableRng};
@@ -793,8 +819,8 @@ mod tests {
     use crate::{ComputeDataType, MatmulEngineU16, MatmulEngineU32};
     const WIDTH: usize = 12_800;
     const QUERY_SIZE: usize = 31;
-    const DB_SIZE: usize = 10000;
-    const CHUNK_SIZE: usize = 1000;
+    const DB_SIZE: usize = 1000;
+    const CHUNK_SIZE: usize = 100;
     const RNG_SEED: u64 = 1337;
 
     /// Helpers
@@ -968,47 +994,59 @@ mod tests {
         );
     }
 
-//     #[test]
-//     /// u32 x u32 → u32
-//     fn check_u32() {
-//         let mut rng = StdRng::seed_from_u64(RNG_SEED);
-//         let db = (0..DB_SIZE * WIDTH)
-//             .map(|_| rng.gen::<u32>())
-//             .collect::<Vec<_>>();
-//         let query = (0..QUERY_SIZE * WIDTH)
-//             .map(|_| rng.gen::<u32>())
-//             .collect::<Vec<_>>();
-//         let mut gpu_result = vec![0u32; DB_SIZE * QUERY_SIZE];
+    #[test]
+    /// u32 x u32 → u32
+    fn check_u32() {
+        let mut rng = StdRng::seed_from_u64(RNG_SEED);
+        let db = (0..DB_SIZE * WIDTH)
+            .map(|_| rng.gen::<u32>())
+            .collect::<Vec<_>>();
+        let query = (0..QUERY_SIZE * WIDTH)
+            .map(|_| rng.gen::<u32>())
+            .collect::<Vec<_>>();
 
-//         let mut engine = MatmulEngineU32::create(&db, WIDTH, QUERY_SIZE, CHUNK_SIZE);
-//         let preprocessed_query = engine.preprocess_query(&query);
-//         engine.dot(&preprocessed_query, &mut gpu_result);
+        
+        let mut engine = MatmulEngineU32::create(&db, WIDTH, QUERY_SIZE, CHUNK_SIZE);
 
-//         let a_nda = Array2::from_shape_vec(
-//             (DB_SIZE as usize, WIDTH as usize),
-//             db.into_iter().map(|x| x as u64).collect::<Vec<_>>(),
-//         )
-//         .unwrap();
+        let mut results_host_ptr: *mut c_void = std::ptr::null_mut();
+        unsafe {
+            let _ = cuMemAllocHost_v2(&mut results_host_ptr, DB_SIZE * QUERY_SIZE * 4);
+        }
 
-//         let b_nda = Array2::from_shape_vec(
-//             (QUERY_SIZE as usize, WIDTH as usize),
-//             query.into_iter().map(|x| x as u64).collect::<Vec<_>>(),
-//         )
-//         .unwrap();
+        let preprocessed_query = engine.preprocess_query(&query);
+        engine.dot(&preprocessed_query, results_host_ptr as *mut u32);
 
-//         let c_nda = a_nda.dot(&b_nda.t());
+        let gpu_result: &[u32] = unsafe {
+            slice::from_raw_parts(results_host_ptr as *mut u32, DB_SIZE * QUERY_SIZE)
+        };
 
-//         let mut vec_column_major: Vec<u32> = Vec::new();
-//         for col in 0..c_nda.ncols() {
-//             for row in c_nda.column(col) {
-//                 vec_column_major.push(*row as u32);
-//             }
-//         }
+        let a_nda = Array2::from_shape_vec(
+            (DB_SIZE as usize, WIDTH as usize),
+            db.into_iter().map(|x| x as u64).collect::<Vec<_>>(),
+        )
+        .unwrap();
 
-//         assert_eq!(
-//             vec_column_major[0..10],
-//             gpu_result[0..10],
-//             "GPU result does not match CPU implementation"
-//         );
-//     }
+        let b_nda = Array2::from_shape_vec(
+            (QUERY_SIZE as usize, WIDTH as usize),
+            query.into_iter().map(|x| x as u64).collect::<Vec<_>>(),
+        )
+        .unwrap();
+
+        let c_nda = a_nda.dot(&b_nda.t());
+
+        let mut vec_column_major: Vec<u32> = Vec::new();
+        for col in 0..c_nda.ncols() {
+            for row in c_nda.column(col) {
+                vec_column_major.push(*row as u32);
+            }
+        }
+
+        let len = DB_SIZE * QUERY_SIZE;
+
+        assert_eq!(
+            vec_column_major[len-10..len],
+            gpu_result[len-10..len],
+            "GPU result does not match CPU implementation"
+        );
+    }
 }
