@@ -100,13 +100,15 @@ extern \"C\" __global__ void matmul_u32(int* c, unsigned int* output, unsigned i
     size_t idx = blockIdx.x * blockDim.x + threadIdx.x + offset;
     size_t numElements = n * m;
 
-    if (idx < chunkSize) {
+    // if (idx - offset < chunkSize) {
         unsigned int as[4] = {};
         unsigned int bs[4] = {};
 
+        size_t vIdx = (idx/100) * 1000 + (idx % 31);
+
         for (int i=0;i<4;i++) {
-            as[i] = aSums[(i * n) + (idx % n)];
-            bs[i] = bSums[(i * m) + (idx / n)] + k * 128;
+            as[i] = aSums[(i * n) + (vIdx % n)];
+            bs[i] = bSums[(i * m) + (vIdx / n)] + k * 128;
         }
 
         unsigned int result = 0;
@@ -119,8 +121,8 @@ extern \"C\" __global__ void matmul_u32(int* c, unsigned int* output, unsigned i
             }
         }
 
-        output[idx] = result;
-    }
+        output[(idx % 100) * 31 + (idx / 100)] = result;
+    // }
 }
 ";
 
@@ -1029,12 +1031,12 @@ mod tests {
 
         let c_nda = a_nda.dot(&b_nda.t());
 
-        let mut vec_column_major: Vec<u32> = Vec::new();
-        for col in 0..c_nda.ncols() {
-            for row in c_nda.column(col) {
-                vec_column_major.push(*row as u32);
-            }
-        }
+        // let mut vec_column_major: Vec<u32> = Vec::new();
+        // for col in 0..c_nda.ncols() {
+        //     for row in c_nda.column(col) {
+        //         vec_column_major.push(*row as u32);
+        //     }
+        // }
 
         let len = DB_SIZE * QUERY_SIZE;
 
@@ -1050,8 +1052,8 @@ mod tests {
         println!("non 0 vals: {:?} {}", c, len);
 
         assert_eq!(
-            vec_column_major[50..101],
-            gpu_result[50..101],
+            c_nda.into_raw_vec().iter().map(|x| *x as u32).collect::<Vec<_>>()[0..150],
+            gpu_result[0..150],
             // vec_column_major[len - 10..len],
             // gpu_result[len - 10..len],
             "GPU result does not match CPU implementation"
