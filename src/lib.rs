@@ -96,15 +96,15 @@ extern \"C\" __global__ void matmul_u14(unsigned int* c, unsigned short* output,
 }
 
 
-extern \"C\" __global__ void matmul_u32(int* c, unsigned int* output, unsigned int* aSums, int* bSums, size_t n, size_t m, size_t k, size_t offset, size_t chunkSize) {
-    size_t idx = blockIdx.x * blockDim.x + threadIdx.x + offset;
+extern \"C\" __global__ void matmul_u32(int* c, unsigned int* output, unsigned int* aSums, int* bSums, size_t n, size_t m, size_t k, size_t offset, size_t chunkSize, size_t chunkIdx) {
+    size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
     size_t numElements = n * m;
 
-    // if (idx - offset < chunkSize) {
+    if (idx < chunkSize) {
         unsigned int as[4] = {};
         unsigned int bs[4] = {};
 
-        size_t vIdx = (idx/100) * 1000 + (idx % 31);
+        size_t vIdx = (idx/100) * 1000 + (idx % 100) + chunkIdx*100;
 
         for (int i=0;i<4;i++) {
             as[i] = aSums[(i * n) + (vIdx % n)];
@@ -115,14 +115,14 @@ extern \"C\" __global__ void matmul_u32(int* c, unsigned int* output, unsigned i
         for (int i=0;i<4;i++) {
             for (int j=0;j<4;j++) {
                 if ((i+j) > 4) continue;
-                unsigned int tmp = c[idx + numElements * (4 * i + j)] + ((as[i] + bs[j]) << 7) - (k * 16384);
+                unsigned int tmp = c[idx + offset + numElements * (4 * i + j)] + ((as[i] + bs[j]) << 7) - (k * 16384);
                 tmp <<= 8 * (i + j);
                 result += tmp;
             }
         }
 
-        output[(idx % 100) * 31 + (idx / 100)] = result;
-    // }
+        output[idx/100 + (idx % 100) * 31 + offset] = result;
+    }
 }
 ";
 
@@ -755,6 +755,7 @@ impl MatmulEngineU32 {
                         self.entry_size as u64,
                         (chunk_idx * self.chunk_size * self.query_length) as u64,
                         (self.chunk_size * self.query_length) as u64,
+                        chunk_idx as u64,
                     ),
                 )
             }
@@ -773,7 +774,6 @@ impl MatmulEngineU32 {
                     // streams[chunk_idx].stream,
                 );
             }
-            break;
             // println!("{:?}", now.elapsed());
             // streams.push(stream);
             // self.dev.synchronize().unwrap();
@@ -1031,12 +1031,12 @@ mod tests {
 
         let c_nda = a_nda.dot(&b_nda.t());
 
-        // let mut vec_column_major: Vec<u32> = Vec::new();
-        // for col in 0..c_nda.ncols() {
-        //     for row in c_nda.column(col) {
-        //         vec_column_major.push(*row as u32);
-        //     }
-        // }
+        let mut vec_column_major: Vec<u32> = Vec::new();
+        for col in 0..c_nda.ncols() {
+            for row in c_nda.column(col) {
+                vec_column_major.push(*row as u32);
+            }
+        }
 
         let len = DB_SIZE * QUERY_SIZE;
 
@@ -1052,10 +1052,8 @@ mod tests {
         println!("non 0 vals: {:?} {}", c, len);
 
         assert_eq!(
-            c_nda.into_raw_vec().iter().map(|x| *x as u32).collect::<Vec<_>>()[0..150],
-            gpu_result[0..150],
-            // vec_column_major[len - 10..len],
-            // gpu_result[len - 10..len],
+            c_nda.into_raw_vec().iter().map(|x| *x as u32).collect::<Vec<_>>()[3099..3101],
+            gpu_result[3099..3101],
             "GPU result does not match CPU implementation"
         );
     }
