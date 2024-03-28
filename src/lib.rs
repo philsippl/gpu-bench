@@ -667,12 +667,6 @@ impl MatmulEngineU32 {
     }
 
     pub fn dot(&mut self, preprocessed_query: &Vec<Vec<u8>>, results_host: *mut u32) {
-        // let mut results_host_ptr: *mut c_void = std::ptr::null_mut();
-        // unsafe {
-        //     let _ = cuMemAllocHost_v2(&mut results_host_ptr, results_host.len() * 4);
-        // }
-
-        let dummy: CudaSlice<u8> = self.dev.alloc_zeros(1).unwrap();
 
         let b_dev = preprocessed_query
             .iter()
@@ -714,13 +708,12 @@ impl MatmulEngineU32 {
                         continue;
                     }
                     gemm(
-                        // blass[chunk_idx].handle(),
-                        self.blas.handle(),
+                        blass[chunk_idx].handle(),
                         &b_dev[j],
                         &self.db[i],
                         &mut self.intermediate_results,
                         0,
-                        (chunk_idx * self.chunk_size) as u64,
+                        (chunk_idx * self.entry_size * self.chunk_size) as u64,
                         ((self.db_length * self.query_length * 4) * (i * 4 + j)
                         + (chunk_idx * self.chunk_size * self.query_length * 4)) as u64,
                         self.query_length,
@@ -740,8 +733,8 @@ impl MatmulEngineU32 {
             };
 
             unsafe {
-                self.function.clone().launch(
-                    // &streams[chunk_idx],
+                self.function.clone().launch_on_stream(
+                    &streams[chunk_idx],
                     cfg,
                     (
                         &self.intermediate_results,
@@ -759,46 +752,22 @@ impl MatmulEngineU32 {
             }
             .unwrap();
 
-            // let now = Instant::now();
             unsafe {
-                // let tmp_ptr: *mut c_void = results_host.as_mut_ptr() as *mut _;
-                let _ = cuMemcpyDtoH_v2(
+                let _ = cuMemcpyDtoHAsync_v2(
                     results_host
                         .byte_offset((self.chunk_size * chunk_idx * self.query_length * 4) as isize)
                         as *mut c_void,
                     *self.results.device_ptr()
                         + (self.chunk_size * chunk_idx * self.query_length * 4) as u64,
                     self.chunk_size * self.query_length * 4,
-                    // streams[chunk_idx].stream,
+                    streams[chunk_idx].stream,
                 );
             }
-            // println!("{:?}", now.elapsed());
-            // streams.push(stream);
-            // self.dev.synchronize().unwrap();
         }
 
-        self.dev.synchronize();
-
-        // let now = Instant::now();
         for stream in streams {
             self.dev.wait_for(&stream).unwrap();
         }
-
-        // let mut xx = vec![0u8;1];
-        // self.dev.dtoh_sync_copy_into(&dummy, &mut xx);
-
-        // println!("{:?}", now.elapsed());
-
-        // let v: Vec<u32> = unsafe {
-        //     let results_host_ptr = results_host_ptr as *mut u32;
-        //     slice::from_raw_parts(results_host_ptr, results_host.len() as usize).to_vec()
-        // };
-
-        // *results_host = v;
-
-        // self.dev
-        //     .dtoh_sync_copy_into(&self.results, results_host)
-        //     .unwrap();
     }
 }
 
@@ -1040,17 +1009,16 @@ mod tests {
 
         let mut c = 0;
         for e in gpu_result {
-            if *e == 139645095 {
-                println!("found!")
+            if *e != 0 {
+                c+=1
             } 
-            c+=1;
         }
 
         println!("non 0 vals: {:?} {}", c, len);
 
         assert_eq!(
-            c_nda.into_raw_vec().iter().map(|x| *x as u32).collect::<Vec<_>>()[3099..3102],
-            gpu_result[3099..3102],
+            c_nda.into_raw_vec().iter().map(|x| *x as u32).collect::<Vec<_>>(),
+            gpu_result,
             "GPU result does not match CPU implementation"
         );
     }
