@@ -7,7 +7,7 @@ use rand::{rngs::StdRng, Rng, SeedableRng};
 
 const WIDTH: usize = 12_800;
 const DB_SIZE: usize = 100_000;
-const CHUNK_SIZE: usize = 100_000;
+const CHUNK_SIZE: usize = 10_000;
 const RNG_SEED: u64 = 40;
 const QUERY_SIZES: &[usize] = &[930, 1550, 2170];
 
