@@ -97,29 +97,31 @@ extern \"C\" __global__ void matmul_u14(unsigned int* c, unsigned short* output,
 
 
 extern \"C\" __global__ void matmul_u32(int* c, unsigned int* output, unsigned int* aSums, int* bSums, size_t n, size_t m, size_t k, size_t offset, size_t chunkSize, size_t chunkIdx) {
-    size_t idx = blockIdx.x * blockDim.x + threadIdx.x + offset;
+    size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
     size_t numElements = n * m;
 
-    if (idx - offset < chunkSize) {
+    if (idx < chunkSize*m) {
         unsigned int as[4] = {};
         unsigned int bs[4] = {};
 
+        size_t vIdx = (idx/chunkSize) * n + (idx % chunkSize) + chunkIdx*chunkSize;
+
         for (int i=0;i<4;i++) {
-            as[i] = aSums[(i * n) + (idx / m)];
-            bs[i] = bSums[(i * m) + (idx % m)] + k * 128;
+            as[i] = aSums[(i * n) + (vIdx % n)];
+            bs[i] = bSums[(i * m) + (vIdx / n)] + k * 128;
         }
 
         unsigned int result = 0;
         for (int i=0;i<4;i++) {
             for (int j=0;j<4;j++) {
                 if ((i+j) > 4) continue;
-                unsigned int tmp = c[idx + numElements * (4 * i + j)] + ((as[i] + bs[j]) << 7) - (k * 16384);
+                unsigned int tmp = c[idx + offset + numElements * (4 * i + j)] + ((as[i] + bs[j]) << 7) - (k * 16384);
                 tmp <<= 8 * (i + j);
                 result += tmp;
             }
         }
 
-        output[idx] = result;
+        output[idx/chunkSize + (idx % chunkSize) * m + offset] = result;
     }
 }
 ";
@@ -667,6 +669,7 @@ impl MatmulEngineU32 {
     }
 
     pub fn dot(&mut self, preprocessed_query: &Vec<Vec<u8>>, results_host: *mut u32) {
+        let dummy: CudaSlice<u8> = self.dev.alloc_zeros(1).unwrap();
 
         let b_dev = preprocessed_query
             .iter()
@@ -709,15 +712,15 @@ impl MatmulEngineU32 {
                     }
                     gemm(
                         blass[chunk_idx].handle(),
-                        &b_dev[j],
                         &self.db[i],
+                        &b_dev[j],
                         &mut self.intermediate_results,
-                        0,
                         (chunk_idx * self.entry_size * self.chunk_size) as u64,
+                        0,
                         ((self.db_length * self.query_length * 4) * (i * 4 + j)
                         + (chunk_idx * self.chunk_size * self.query_length * 4)) as u64,
-                        self.query_length,
                         self.chunk_size,
+                        self.query_length,
                         self.entry_size,
                     );
                 }
@@ -745,7 +748,7 @@ impl MatmulEngineU32 {
                         self.query_length as u64,
                         self.entry_size as u64,
                         (chunk_idx * self.chunk_size * self.query_length) as u64,
-                        (self.chunk_size * self.query_length) as u64,
+                        self.chunk_size as u64,
                         chunk_idx as u64,
                     ),
                 )
