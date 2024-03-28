@@ -1,11 +1,15 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion, Throughput};
 use gpu_bench::{ComputeDataType, MatmulEngineU16, MatmulEngineU32};
 use rand::{rngs::StdRng, Rng, SeedableRng};
+use core::slice;
+use cudarc::driver::sys::cuMemAllocHost_v2;
+use std::ffi::c_void;
 
 const WIDTH: usize = 12_800;
 const DB_SIZE: usize = 100_000;
 const RNG_SEED: u64 = 40;
-const QUERY_SIZES: &[usize] = &[31, 155, 310, 620, 930, 1550, 2170];
+// const QUERY_SIZES: &[usize] = &[31, 62, 93, 124, 155, 186, 217, 248, 279, 310, 341, 372, 403, 434, 465, 496, 527, 558, 589, 620, 651, 682, 713, 744, 775, 806, 837, 868, 899, 930, 961, 992, 1023, 1054, 1085, 1116, 1147, 1178, 1209, 1240, 1271, 1302, 1333, 1364, 1395, 1426, 1457, 1488, 1519, 1550, 1581, 1612, 1643, 1674, 1705, 1736, 1767, 1798, 1829];
+const QUERY_SIZES: &[usize] = &[930];
 
 fn bench_u16(c: &mut Criterion) {
     let mut group = c.benchmark_group("bench_u16");
@@ -181,10 +185,10 @@ fn bench_u32(c: &mut Criterion) {
             .map(|_| rng.gen::<u32>())
             .collect::<Vec<_>>();
 
-        let mut gpu_result = vec![0u32; DB_SIZE * query_size];
-        // unsafe {
-        //     cuMemAllocHost_v2(gpu_result.as_mut_ptr() as *mut _, DB_SIZE * query_size);
-        // }
+        let mut results_host_ptr: *mut c_void = std::ptr::null_mut();
+        unsafe {
+            let _ = cuMemAllocHost_v2(&mut results_host_ptr, DB_SIZE * query_size * 4);
+        }
 
         group.throughput(Throughput::Elements((DB_SIZE * query_size / 31) as u64));
         let mut engine =
@@ -195,13 +199,13 @@ fn bench_u32(c: &mut Criterion) {
             format!("u32 x u32 → u32 ({} x {})", DB_SIZE, query_size),
             |b| {
                 b.iter(|| {
-                    black_box(engine.dot(&preprocessed_query, &mut gpu_result));
+                    black_box(engine.dot(&preprocessed_query, results_host_ptr));
                 });
             },
         );
     }
 }
 
-criterion_group!(benches, bench_u16, bench_p16, bench_u16u32, bench_p14, bench_u14, bench_u32);
-// criterion_group!(benches, bench_u32);
+// criterion_group!(benches, bench_u16, bench_p16, bench_u16u32, bench_p14, bench_u14, bench_u32);
+criterion_group!(benches, bench_u32);
 criterion_main!(benches);

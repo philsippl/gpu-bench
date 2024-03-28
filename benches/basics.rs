@@ -77,30 +77,22 @@ fn bench_memcpy_dtoh(c: &mut Criterion) {
     const DB_SIZE: usize = 200_000;
 
     for query_size in [930, 1000] {
+
         let data: CudaSlice<u8> = dev.alloc_zeros(query_size * DB_SIZE * 2).unwrap();
-        let mut result = vec![0u8; query_size * DB_SIZE * 2];
-        unsafe {
-            cuMemAllocHost_v2(result.as_mut_ptr() as *mut _, query_size * DB_SIZE * 2);
-        }
-
-
-        // let mut c_host_ptr: *mut c_void = std::ptr::null_mut();
-        // unsafe {
-        //     let _ = cuMemAllocHost_v2(&mut c_host_ptr, query_size * DB_SIZE * 2);
-        // }
-    //
-    // unsafe {
-    //     let _ = cuMemcpyDtoH_v2(c_host_ptr, *c_dev.device_ptr(), bytesize);
-    // }
+        
         group.throughput(Throughput::Bytes((query_size * DB_SIZE * 2) as u64));
         group.bench_function(
             format!("device to host memcpy ({} x {})", query_size, DB_SIZE),
             |b| {
+                let mut results_host_ptr: *mut c_void = std::ptr::null_mut();
+                unsafe {
+                    let _ = cuMemAllocHost_v2(&mut results_host_ptr, query_size * DB_SIZE * 2);
+                }
+
                 b.iter(|| {
-                    black_box(dev.dtoh_sync_copy_into(&data, &mut result).unwrap());
-                    // unsafe {
-                    //     let _ = cuMemcpyDtoH_v2(c_host_ptr, *data.device_ptr(), query_size * DB_SIZE * 2);
-                    // }
+                    unsafe {
+                        let _ = cuMemcpyDtoH_v2(results_host_ptr, *data.device_ptr(), query_size * DB_SIZE * 2);
+                    }
                 });
             },
         );

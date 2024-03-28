@@ -3,6 +3,7 @@ use std::{ffi::c_void, sync::Arc};
 use cudarc::{
     cublas::{result::gemm_ex, sys, CudaBlas},
     driver::{
+        sys::{cuMemAllocHost_v2, cuMemcpyDtoHAsync_v2, cuMemcpyDtoH_v2},
         CudaDevice, CudaFunction, CudaSlice, DevicePtr, DevicePtrMut, LaunchAsync, LaunchConfig,
     },
     nvrtc::compile_ptx,
@@ -658,7 +659,7 @@ impl MatmulEngineU32 {
         result.to_vec()
     }
 
-    pub fn dot(&mut self, preprocessed_query: &Vec<Vec<u8>>, results_host: &mut Vec<u32>) {
+    pub fn dot(&mut self, preprocessed_query: &Vec<Vec<u8>>, results_host: *mut c_void) {
         let b_dev = preprocessed_query
             .iter()
             .map(|b| self.dev.htod_sync_copy(b).unwrap())
@@ -724,9 +725,15 @@ impl MatmulEngineU32 {
         }
         .unwrap();
 
-        self.dev
-            .dtoh_sync_copy_into(&self.results, results_host)
-            .unwrap();
+        // self.dev
+            // .dtoh_sync_copy_into(&self.results, results_host)
+            // .unwrap();
+
+        unsafe {
+            let _ = cuMemcpyDtoH_v2(results_host, *self.results.device_ptr(), self.db_length * self.query_length * 4);
+        }
+
+        self.dev.synchronize();
     }
 }
 
@@ -736,6 +743,9 @@ mod tests {
     use ndarray::Array2;
     use num_traits::FromPrimitive;
     use rand::{rngs::StdRng, Rng, SeedableRng};
+    use core::slice;
+    use cudarc::driver::sys::cuMemAllocHost_v2;
+    use std::ffi::c_void;
 
     use crate::{ComputeDataType, MatmulEngineU16, MatmulEngineU32};
     const WIDTH: usize = 12_800;
@@ -928,11 +938,18 @@ mod tests {
         let query = (0..QUERY_SIZE * WIDTH)
             .map(|_| rng.gen::<u32>())
             .collect::<Vec<_>>();
-        let mut gpu_result = vec![0u32; DB_SIZE * QUERY_SIZE];
-
         let mut engine = MatmulEngineU32::create(&db, WIDTH, QUERY_SIZE);
+
+        let mut results_host_ptr: *mut c_void = std::ptr::null_mut();
+        unsafe {
+            let _ = cuMemAllocHost_v2(&mut results_host_ptr, DB_SIZE * QUERY_SIZE * 4);
+        }
+
         let preprocessed_query = engine.preprocess_query(&query);
-        engine.dot(&preprocessed_query, &mut gpu_result);
+        engine.dot(&preprocessed_query, results_host_ptr);
+
+        let gpu_result: &[u32] =
+            unsafe { slice::from_raw_parts(results_host_ptr as *mut u32, DB_SIZE * QUERY_SIZE) };
 
         let a_nda = Array2::from_shape_vec(
             (DB_SIZE as usize, WIDTH as usize),

@@ -60,13 +60,14 @@ def plot_benchmarks(benchmarks, output_file):
         print(bench)
         plt.plot(values["x"], values["y"], label=bench, marker='.')
 
-    plt.xlabel('Batch Size')
-    plt.ylabel('Million Queries/s')
-    plt.title('Matmul')
-    plt.legend()
-    plt.grid(True)
-    plt.ylim(ymin=0)
-    plt.savefig(output_file, bbox_inches='tight')
+        plt.xlabel('Batch Size')
+        plt.ylabel('Million Queries/s')
+        plt.title('Matmul')
+        plt.legend()
+        plt.grid(True)
+        plt.ylim(ymin=0)
+        plt.savefig(bench+".png", bbox_inches='tight')
+        plt.clf()
 
 # Usage
 root_dir = 'target/criterion'
