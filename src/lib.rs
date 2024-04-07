@@ -96,62 +96,27 @@ extern \"C\" __global__ void matmul_u14(unsigned int* c, unsigned short* output,
 }
 
 
-extern \"C\" __global__ void matmul_u32_tmp(int* c, unsigned int* output, unsigned int* aSums, int* bSums, size_t n, size_t m, size_t k, size_t offset, size_t chunkSize, size_t chunkIdx) {
+extern \"C\" __global__ void matmul_u32(int* output, unsigned int* aSums, int* bSums, size_t n, size_t m, size_t k, size_t offset, size_t chunkSize, size_t chunkIdx) {
     size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
-    size_t numElements = n * m;
 
     if (idx < chunkSize*m) {
         unsigned int as[4] = {};
         unsigned int bs[4] = {};
 
-        size_t vIdx = (idx/chunkSize) * n + (idx % chunkSize) + chunkIdx*chunkSize;
-
         for (int i=0;i<4;i++) {
-            as[i] = aSums[(i * n) + (vIdx % n)];
-            bs[i] = bSums[(i * m) + (vIdx / n)] + k * 128;
+            as[i] = aSums[(i * n) + (idx % n)];
+            bs[i] = bSums[(i * m) + (idx / n)] + k * 128;
         }
 
         unsigned int result = 0;
         for (int i=0;i<4;i++) {
             for (int j=0;j<4;j++) {
-                if ((i+j) > 4) continue;
-                unsigned f = 1 << (8 * (i + j));
-                unsigned int tmp = c[idx + offset + numElements * (4 * i + j)] + (((as[i] + bs[j]) << 7) - (k * 16384)) * f;
-                // tmp <<= 8 * (i + j);
-                result += tmp;
+                if ((i+j) >= 4) continue;
+                result += (((as[i] + bs[j]) << 7) - (k * 16384)) << (8 * (i + j));
             }
         }
 
-        output[idx/chunkSize + (idx % chunkSize) * m + offset] = result;
-    }
-}
-
-extern \"C\" __global__ void matmul_u32(int* output, unsigned int* aSums, int* bSums, size_t n, size_t m, size_t k, size_t offset, size_t chunkSize, size_t chunkIdx) {
-    size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
-    size_t numElements = n * m;
-
-    if (idx < chunkSize*m) {
-        unsigned int as[4] = {};
-        unsigned int bs[4] = {};
-
-        size_t vIdx = (idx/chunkSize) * n + (idx % chunkSize) + chunkIdx*chunkSize;
-
-        for (int i=0;i<4;i++) {
-            as[i] = aSums[(i * n) + (vIdx % n)];
-            bs[i] = bSums[(i * m) + (vIdx / n)] + k * 128;
-        }
-
-        int result = 0;
-        for (int i=0;i<4;i++) {
-            for (int j=0;j<4;j++) {
-                if ((i+j) > 4) continue;
-                int tmp = ((as[i] + bs[j]) << 7) - (k * 16384);
-                int f = 1 << 8 * (i + j);
-                result += tmp * f;
-            }
-        }
-
-        output[idx/chunkSize + (idx % chunkSize) * m + offset] = result;
+        output[idx + offset] += result;
     }
 }
 ";
@@ -161,46 +126,6 @@ pub fn gemm(
     a: &CudaSlice<u8>,
     b: &CudaSlice<u8>,
     c: &mut CudaSlice<i32>,
-    a_offset: u64,
-    b_offset: u64,
-    c_offset: u64,
-    m: usize,
-    n: usize,
-    k: usize,
-    alpha: i32,
-    beta: i32,
-) {
-    unsafe {
-        gemm_ex(
-            handle.clone(),
-            sys::cublasOperation_t::CUBLAS_OP_T,
-            sys::cublasOperation_t::CUBLAS_OP_N,
-            m as i32,
-            n as i32,
-            k as i32,
-            &alpha as *const i32 as *const c_void,
-            (*a.device_ptr() + a_offset) as *const _,
-            sys::cublasDataType_t::CUDA_R_8I,
-            k as i32,
-            (*b.device_ptr() + b_offset) as *const _,
-            sys::cublasDataType_t::CUDA_R_8I,
-            k as i32,
-            &beta as *const i32 as *const c_void,
-            (*c.device_ptr_mut() + c_offset) as *mut _,
-            sys::cublasDataType_t::CUDA_R_32I,
-            m as i32,
-            sys::cublasComputeType_t::CUBLAS_COMPUTE_32I_PEDANTIC,
-            sys::cublasGemmAlgo_t::CUBLAS_GEMM_DEFAULT,
-        )
-        .unwrap();
-    }
-}
-
-pub fn gemm2(
-    handle: &sys::cublasHandle_t,
-    a: &CudaSlice<u8>,
-    b: &CudaSlice<u8>,
-    c: &mut CudaSlice<u32>,
     a_offset: u64,
     b_offset: u64,
     c_offset: u64,
@@ -802,7 +727,29 @@ impl MatmulEngineU32 {
         }
 
         for chunk_idx in 0..self.db_length / self.chunk_size {
-            // Prepare sums
+            for i in 0..4 {
+                for j in 0..4 {
+                    if i + j >= 4 {
+                        continue;
+                    }
+
+                    gemm(
+                        blass[chunk_idx].handle(),
+                        &self.db[i],
+                        &b_dev[j],
+                        &mut self.results,
+                        (chunk_idx * self.entry_size * self.chunk_size) as u64,
+                        0,
+                        (chunk_idx * self.chunk_size * self.query_length * 4) as u64,
+                        self.chunk_size,
+                        self.query_length,
+                        self.entry_size,
+                        (1 << 8 * (i + j)) as i32,
+                        if i + j == 0 { 0 } else { 1 },
+                    );
+                }
+            }
+
             unsafe {
                 self.function.clone().launch_on_stream(
                     &streams[chunk_idx],
@@ -821,28 +768,6 @@ impl MatmulEngineU32 {
                 )
             }
             .unwrap();
-
-            for i in 0..4 {
-                for j in 0..4 {
-                    if i + j > 4 {
-                        continue;
-                    }
-                    gemm(
-                        blass[chunk_idx].handle(),
-                        &self.db[i],
-                        &b_dev[j],
-                        &mut self.results,
-                        (chunk_idx * self.entry_size * self.chunk_size) as u64,
-                        0,
-                        (chunk_idx * self.chunk_size * self.query_length * 4) as u64,
-                        self.chunk_size,
-                        self.query_length,
-                        self.entry_size,
-                        1 << 8 * (i + j) as i32,
-                        1,
-                    );
-                }
-            }
 
             self.dev.wait_for(&streams[chunk_idx]);
 
@@ -1058,12 +983,8 @@ mod tests {
     /// u32 x u32 → u32
     fn check_u32() {
         let mut rng = StdRng::seed_from_u64(RNG_SEED);
-        let db = (0..DB_SIZE * WIDTH)
-            .map(|_| 1)
-            .collect::<Vec<_>>();
-        let query = (0..QUERY_SIZE * WIDTH)
-            .map(|_| 1)
-            .collect::<Vec<_>>();
+        let db = (0..DB_SIZE * WIDTH).map(|_| rng.gen::<u32>()).collect::<Vec<_>>();
+        let query = (0..QUERY_SIZE * WIDTH).map(|_| rng.gen::<u32>()).collect::<Vec<_>>();
 
         let mut engine = MatmulEngineU32::create(&db, WIDTH, QUERY_SIZE, CHUNK_SIZE);
 
@@ -1099,23 +1020,8 @@ mod tests {
             }
         }
 
-        let len = DB_SIZE * QUERY_SIZE;
-
-        let mut c = 0;
-        for e in gpu_result {
-            if *e != 0 {
-                c += 1
-            }
-        }
-
-        println!("non 0 vals: {:?} {}", c, len);
-
         assert_eq!(
-            c_nda
-                .into_raw_vec()
-                .iter()
-                .map(|x| *x as u32)
-                .collect::<Vec<_>>()[0..100],
+            vec_column_major[0..100],
             gpu_result[0..100],
             "GPU result does not match CPU implementation"
         );

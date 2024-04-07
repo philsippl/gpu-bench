@@ -145,6 +145,7 @@ fn bench_rowsum(c: &mut Criterion) {
                     query_size,
                     1,
                     WIDTH,
+                    1,0
                 );
 
                 // Make very sure this is not async
@@ -191,6 +192,7 @@ fn bench_gemm(c: &mut Criterion) {
                         DB_SIZE,
                         query_size,
                         WIDTH,
+                        1,0
                     );
 
                     dev.synchronize().unwrap();
