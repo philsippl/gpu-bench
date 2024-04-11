@@ -1,0 +1,29 @@
+TODO:
+=====
+- implement p32
+- remove query transfer
+- tune hyperparameters: batch size, chunk size
+- dedicated implementation for p16 and u16
+- implement async mem for p16
+- implement async mem for u16
+
+Benchmarks:
+===========
+- focus on p16, u16, p32, u32
+- melem/s vs. batch size (line plot)
+- best against each other + cpu (bar plot)
+- bench h100, a100, rtx 4090
+- compare to triton fp32 matmul kernel
+- maximum db size on h100
+- mem transfer vs. compute time
+- async memory transfer vs. sync
+- $ cost estimate for 10M at 10 req/s and compare to CPU
+
+Paper:
+======
+- memory transfer importance -> p5.16xlarge far away from maximum PCIe 5.0 throughput
+    - could be interesting to build a system optimized for GPU PCI throughput
+    - async memory
+- signed int8 math on bytes and conversion to unsigned
+- bc of memory transfer dominance, a100 (80 gb) could be used to save costs
+-
