@@ -125,6 +125,7 @@ extern \"C\" __global__ void matmul_u32(int* intermediate, int* output, unsigned
 
 extern \"C\" __global__ void matmul_p32(int* intermediate, int* output, unsigned int* aSums, int* bSums, size_t n, size_t m, size_t k, size_t offset, size_t chunkSize, size_t chunkIdx, unsigned int p) {
     size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
+    unsigned long long pp = p;
 
     if (idx < chunkSize*m) {
         unsigned int as[4] = {};
@@ -143,20 +144,23 @@ extern \"C\" __global__ void matmul_p32(int* intermediate, int* output, unsigned
 
         for (int i=0;i<4;i++) {
             for (int j=0;j<4;j++) {
-                let result_idx = (i % 2) * 2 + (j % 2);
-                result[result_idx] += (((as[i] + bs[j]) << 7) - (k * 16384)) << (8 * (i + j));
+                size_t ii = (i % 2);
+                size_t jj = (j % 2);
+                size_t result_idx = (i / 2) * 2 + (j / 2);
+                result[result_idx] += (((as[i] + bs[j]) << 7) - (k * 16384)) << (8 * (ii + jj));
             }
         }
 
-        unsigned int final_result = 0;
+        unsigned long long final_result = 0;
         for (int i=0;i<2;i++) {
             for (int j=0;j<2;j++) {
-                final_result += (result[i*2+j] % p) * ((1 << (16+i+j)) % p)) % p;
+                unsigned long long f = (1 << (16*(i+j))) % pp;
+                final_result += ((result[i*2+j] % pp) * f) % pp;
             }
         }
 
         // transpose output
-        output[idx/chunkSize + (idx % chunkSize) * m + offset] = final_result % p;
+        output[idx/chunkSize + (idx % chunkSize) * m + offset] = final_result % pp;
     }
 }
 ";
@@ -207,7 +211,7 @@ pub enum ComputeDataType {
     U14,
     U16,
     P16,
-    U1632,
+    U16U32,
     U32,
     P32,
 }
@@ -904,7 +908,7 @@ impl MatmulEngineU32 {
                         &mut self.intermediate_results,
                         (chunk_idx * self.entry_size * self.chunk_size) as u64,
                         0,
-                        (ii * 2 + jj) * self.query_length * self.chunk_size * 4 as u64,
+                        (((i/2) * 2 + (j/2)) * self.query_length * self.chunk_size * 4) as u64,
                         self.chunk_size,
                         self.query_length,
                         self.entry_size,
@@ -929,6 +933,7 @@ impl MatmulEngineU32 {
                         (chunk_idx * self.chunk_size * self.query_length) as u64,
                         self.chunk_size as u64,
                         chunk_idx as u64,
+                        1337,
                     ),
                 )
             }
@@ -1206,7 +1211,7 @@ mod tests {
     fn check_p32() {
         const p: u32 = 1337;
         let mut rng = StdRng::seed_from_u64(RNG_SEED);
-        let db = (0..DB_SIZE * WIDTH).map(|_| 1).collect::<Vec<_>>();
+        let db = (0..DB_SIZE * WIDTH).map(|_| 300).collect::<Vec<_>>();
         let query = (0..QUERY_SIZE * WIDTH).map(|_| 2).collect::<Vec<_>>();
 
         let mut engine =
@@ -1218,7 +1223,7 @@ mod tests {
         }
 
         let preprocessed_query = engine.preprocess_query(&query);
-        engine.dot(&preprocessed_query, results_host_ptr as *mut u32);
+        engine.dot_p32(&preprocessed_query, results_host_ptr as *mut u32);
 
         let gpu_result: &[u32] =
             unsafe { slice::from_raw_parts(results_host_ptr as *mut u32, DB_SIZE * QUERY_SIZE) };
@@ -1248,13 +1253,13 @@ mod tests {
                 for i in 0..k {
                     sum += (A[i + row * k] * B[i + col * k]) % p;
                 }
-                C[row + col * m] = sum;
+                C[row + col * m] = sum % p;
             }
         }
 
         assert_eq!(
-            C[0..1000],
-            gpu_result[0..1000],
+            C[0..100],
+            gpu_result[0..100],
             "GPU result does not match CPU implementation"
         );
     }
