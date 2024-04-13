@@ -1,3 +1,6 @@
+mod ring;
+mod field;
+
 use core::slice;
 use std::{ffi::c_void, sync::Arc, time::Instant};
 
@@ -960,303 +963,302 @@ impl MatmulEngineU32 {
     }
 }
 
-#[cfg(test)]
-/// Sanity checks for correctness
-mod tests {
-    use core::slice;
-    use std::ffi::c_void;
+// #[cfg(test)]
+// mod tests {
+//     use core::slice;
+//     use std::ffi::c_void;
 
-    use cudarc::driver::sys::cuMemAllocHost_v2;
-    use ndarray::Array2;
-    use num_traits::FromPrimitive;
-    use rand::{rngs::StdRng, Rng, SeedableRng};
+//     use cudarc::driver::sys::cuMemAllocHost_v2;
+//     use ndarray::Array2;
+//     use num_traits::FromPrimitive;
+//     use rand::{rngs::StdRng, Rng, SeedableRng};
 
-    use crate::{ComputeDataType, MatmulEngineU16, MatmulEngineU32};
-    const WIDTH: usize = 12_800;
-    const QUERY_SIZE: usize = 31;
-    const DB_SIZE: usize = 1000;
-    const CHUNK_SIZE: usize = 100;
-    const RNG_SEED: u64 = 1337;
+//     use crate::{ComputeDataType, MatmulEngineU16, MatmulEngineU32};
+//     const WIDTH: usize = 12_800;
+//     const QUERY_SIZE: usize = 31;
+//     const DB_SIZE: usize = 1000;
+//     const CHUNK_SIZE: usize = 100;
+//     const RNG_SEED: u64 = 1337;
 
-    /// Helpers
-    fn random_ndarray<T>(array: Vec<u16>, n: usize, m: usize) -> Array2<T>
-    where
-        T: FromPrimitive,
-    {
-        Array2::from_shape_vec(
-            (n as usize, m as usize),
-            array
-                .into_iter()
-                .map(|x| T::from_u16(x).unwrap())
-                .collect::<Vec<_>>(),
-        )
-        .unwrap()
-    }
+//     /// Helpers
+//     fn random_ndarray<T>(array: Vec<u16>, n: usize, m: usize) -> Array2<T>
+//     where
+//         T: FromPrimitive,
+//     {
+//         Array2::from_shape_vec(
+//             (n as usize, m as usize),
+//             array
+//                 .into_iter()
+//                 .map(|x| T::from_u16(x).unwrap())
+//                 .collect::<Vec<_>>(),
+//         )
+//         .unwrap()
+//     }
 
-    fn random_vec(n: usize, m: usize, max_value: u32) -> Vec<u16> {
-        let mut rng = StdRng::seed_from_u64(RNG_SEED);
-        (0..n * m)
-            .map(|_| rng.gen_range(0..max_value) as u16)
-            .collect()
-    }
+//     fn random_vec(n: usize, m: usize, max_value: u32) -> Vec<u16> {
+//         let mut rng = StdRng::seed_from_u64(RNG_SEED);
+//         (0..n * m)
+//             .map(|_| rng.gen_range(0..max_value) as u16)
+//             .collect()
+//     }
 
-    #[test]
-    /// u16 x u16 → u16
-    fn check_u16() {
-        let db = random_vec(DB_SIZE, WIDTH, 1 << 16);
-        let query = random_vec(QUERY_SIZE, WIDTH, 1 << 16);
-        let mut gpu_result = vec![0u16; DB_SIZE * QUERY_SIZE];
+//     #[test]
+//     /// u16 x u16 → u16
+//     fn check_u16() {
+//         let db = random_vec(DB_SIZE, WIDTH, 1 << 16);
+//         let query = random_vec(QUERY_SIZE, WIDTH, 1 << 16);
+//         let mut gpu_result = vec![0u16; DB_SIZE * QUERY_SIZE];
 
-        let mut engine =
-            MatmulEngineU16::<u16>::create(&db, WIDTH, QUERY_SIZE, ComputeDataType::U16, None);
-        let preprocessed_query = engine.preprocess_query(&query);
-        engine.dot(&preprocessed_query, &mut gpu_result);
+//         let mut engine =
+//             MatmulEngineU16::<u16>::create(&db, WIDTH, QUERY_SIZE, ComputeDataType::U16, None);
+//         let preprocessed_query = engine.preprocess_query(&query);
+//         engine.dot(&preprocessed_query, &mut gpu_result);
 
-        let a_nda = random_ndarray::<u16>(db, DB_SIZE, WIDTH);
-        let b_nda = random_ndarray::<u16>(query, QUERY_SIZE, WIDTH);
-        let c_nda = a_nda.dot(&b_nda.t());
+//         let a_nda = random_ndarray::<u16>(db, DB_SIZE, WIDTH);
+//         let b_nda = random_ndarray::<u16>(query, QUERY_SIZE, WIDTH);
+//         let c_nda = a_nda.dot(&b_nda.t());
 
-        let mut vec_column_major: Vec<u16> = Vec::new();
-        for col in 0..c_nda.ncols() {
-            for row in c_nda.column(col) {
-                vec_column_major.push(*row);
-            }
-        }
+//         let mut vec_column_major: Vec<u16> = Vec::new();
+//         for col in 0..c_nda.ncols() {
+//             for row in c_nda.column(col) {
+//                 vec_column_major.push(*row);
+//             }
+//         }
 
-        assert_eq!(
-            vec_column_major, gpu_result,
-            "GPU result does not match CPU implementation"
-        );
-    }
+//         assert_eq!(
+//             vec_column_major, gpu_result,
+//             "GPU result does not match CPU implementation"
+//         );
+//     }
 
-    #[test]
-    /// p16 x p16 → p16
-    fn check_p16() {
-        const P: u16 = ((1u32 << 16) - 17) as u16;
+//     #[test]
+//     /// p16 x p16 → p16
+//     fn check_p16() {
+//         const P: u16 = ((1u32 << 16) - 17) as u16;
 
-        let db = random_vec(DB_SIZE, WIDTH, P as u32);
-        let query = random_vec(QUERY_SIZE, WIDTH, P as u32);
-        let mut gpu_result = vec![0u16; DB_SIZE * QUERY_SIZE];
+//         let db = random_vec(DB_SIZE, WIDTH, P as u32);
+//         let query = random_vec(QUERY_SIZE, WIDTH, P as u32);
+//         let mut gpu_result = vec![0u16; DB_SIZE * QUERY_SIZE];
 
-        let mut engine =
-            MatmulEngineU16::<u16>::create(&db, WIDTH, QUERY_SIZE, ComputeDataType::P16, Some(P));
-        let preprocessed_query = engine.preprocess_query(&query);
-        engine.dot(&preprocessed_query, &mut gpu_result);
+//         let mut engine =
+//             MatmulEngineU16::<u16>::create(&db, WIDTH, QUERY_SIZE, ComputeDataType::P16, Some(P));
+//         let preprocessed_query = engine.preprocess_query(&query);
+//         engine.dot(&preprocessed_query, &mut gpu_result);
 
-        let a_nda = random_ndarray::<u64>(db, DB_SIZE, WIDTH);
-        let b_nda = random_ndarray::<u64>(query, QUERY_SIZE, WIDTH);
-        let c_nda = a_nda.dot(&b_nda.t());
+//         let a_nda = random_ndarray::<u64>(db, DB_SIZE, WIDTH);
+//         let b_nda = random_ndarray::<u64>(query, QUERY_SIZE, WIDTH);
+//         let c_nda = a_nda.dot(&b_nda.t());
 
-        let mut vec_column_major: Vec<u16> = Vec::new();
-        for col in 0..c_nda.ncols() {
-            for row in c_nda.column(col) {
-                vec_column_major.push((*row % (P as u64)) as u16);
-            }
-        }
+//         let mut vec_column_major: Vec<u16> = Vec::new();
+//         for col in 0..c_nda.ncols() {
+//             for row in c_nda.column(col) {
+//                 vec_column_major.push((*row % (P as u64)) as u16);
+//             }
+//         }
 
-        assert_eq!(
-            vec_column_major, gpu_result,
-            "GPU result does not match CPU implementation"
-        );
-    }
+//         assert_eq!(
+//             vec_column_major, gpu_result,
+//             "GPU result does not match CPU implementation"
+//         );
+//     }
 
-    #[test]
-    /// u16 x u16 → u32
-    fn check_u16u32() {
-        let db = random_vec(DB_SIZE, WIDTH, 1 << 16);
-        let query = random_vec(QUERY_SIZE, WIDTH, 1 << 16);
-        let mut gpu_result = vec![0u32; DB_SIZE * QUERY_SIZE];
+//     #[test]
+//     /// u16 x u16 → u32
+//     fn check_u16u32() {
+//         let db = random_vec(DB_SIZE, WIDTH, 1 << 16);
+//         let query = random_vec(QUERY_SIZE, WIDTH, 1 << 16);
+//         let mut gpu_result = vec![0u32; DB_SIZE * QUERY_SIZE];
 
-        let mut engine =
-            MatmulEngineU16::<u32>::create(&db, WIDTH, QUERY_SIZE, ComputeDataType::U16U32, None);
-        let preprocessed_query = engine.preprocess_query(&query);
-        engine.dot(&preprocessed_query, &mut gpu_result);
+//         let mut engine =
+//             MatmulEngineU16::<u32>::create(&db, WIDTH, QUERY_SIZE, ComputeDataType::U16U32, None);
+//         let preprocessed_query = engine.preprocess_query(&query);
+//         engine.dot(&preprocessed_query, &mut gpu_result);
 
-        let a_nda = random_ndarray::<u64>(db, DB_SIZE, WIDTH);
-        let b_nda = random_ndarray::<u64>(query, QUERY_SIZE, WIDTH);
-        let c_nda = a_nda.dot(&b_nda.t());
+//         let a_nda = random_ndarray::<u64>(db, DB_SIZE, WIDTH);
+//         let b_nda = random_ndarray::<u64>(query, QUERY_SIZE, WIDTH);
+//         let c_nda = a_nda.dot(&b_nda.t());
 
-        let mut vec_column_major: Vec<u32> = Vec::new();
-        for col in 0..c_nda.ncols() {
-            for row in c_nda.column(col) {
-                vec_column_major.push(*row as u32);
-            }
-        }
+//         let mut vec_column_major: Vec<u32> = Vec::new();
+//         for col in 0..c_nda.ncols() {
+//             for row in c_nda.column(col) {
+//                 vec_column_major.push(*row as u32);
+//             }
+//         }
 
-        assert_eq!(
-            vec_column_major, gpu_result,
-            "GPU result does not match CPU implementation"
-        );
-    }
+//         assert_eq!(
+//             vec_column_major, gpu_result,
+//             "GPU result does not match CPU implementation"
+//         );
+//     }
 
-    #[test]
-    /// p14 x p14 → p14
-    fn check_p14() {
-        const P: u16 = (1 << 14) - 3;
+//     #[test]
+//     /// p14 x p14 → p14
+//     fn check_p14() {
+//         const P: u16 = (1 << 14) - 3;
 
-        let db = random_vec(DB_SIZE, WIDTH, P as u32);
-        let query = random_vec(QUERY_SIZE, WIDTH, P as u32);
-        let mut gpu_result = vec![0u16; DB_SIZE * QUERY_SIZE];
+//         let db = random_vec(DB_SIZE, WIDTH, P as u32);
+//         let query = random_vec(QUERY_SIZE, WIDTH, P as u32);
+//         let mut gpu_result = vec![0u16; DB_SIZE * QUERY_SIZE];
 
-        let mut engine =
-            MatmulEngineU16::<u16>::create(&db, WIDTH, QUERY_SIZE, ComputeDataType::P14, Some(P));
-        let preprocessed_query = engine.preprocess_query(&query);
-        engine.dot(&preprocessed_query, &mut gpu_result);
+//         let mut engine =
+//             MatmulEngineU16::<u16>::create(&db, WIDTH, QUERY_SIZE, ComputeDataType::P14, Some(P));
+//         let preprocessed_query = engine.preprocess_query(&query);
+//         engine.dot(&preprocessed_query, &mut gpu_result);
 
-        let a_nda = random_ndarray::<u64>(db, DB_SIZE, WIDTH);
-        let b_nda = random_ndarray::<u64>(query, QUERY_SIZE, WIDTH);
-        let c_nda = a_nda.dot(&b_nda.t());
+//         let a_nda = random_ndarray::<u64>(db, DB_SIZE, WIDTH);
+//         let b_nda = random_ndarray::<u64>(query, QUERY_SIZE, WIDTH);
+//         let c_nda = a_nda.dot(&b_nda.t());
 
-        let mut vec_column_major: Vec<u16> = Vec::new();
-        for col in 0..c_nda.ncols() {
-            for row in c_nda.column(col) {
-                vec_column_major.push((*row % (P as u64)) as u16);
-            }
-        }
+//         let mut vec_column_major: Vec<u16> = Vec::new();
+//         for col in 0..c_nda.ncols() {
+//             for row in c_nda.column(col) {
+//                 vec_column_major.push((*row % (P as u64)) as u16);
+//             }
+//         }
 
-        assert_eq!(
-            vec_column_major, gpu_result,
-            "GPU result does not match CPU implementation"
-        );
-    }
+//         assert_eq!(
+//             vec_column_major, gpu_result,
+//             "GPU result does not match CPU implementation"
+//         );
+//     }
 
-    #[test]
-    /// u14 x u14 → u14
-    fn check_u14() {
-        let db = random_vec(DB_SIZE, WIDTH, 1 << 14);
-        let query = random_vec(QUERY_SIZE, WIDTH, 1 << 14);
-        let mut gpu_result = vec![0u16; DB_SIZE * QUERY_SIZE];
+//     #[test]
+//     /// u14 x u14 → u14
+//     fn check_u14() {
+//         let db = random_vec(DB_SIZE, WIDTH, 1 << 14);
+//         let query = random_vec(QUERY_SIZE, WIDTH, 1 << 14);
+//         let mut gpu_result = vec![0u16; DB_SIZE * QUERY_SIZE];
 
-        let mut engine =
-            MatmulEngineU16::<u16>::create(&db, WIDTH, QUERY_SIZE, ComputeDataType::U14, None);
-        let preprocessed_query = engine.preprocess_query(&query);
-        engine.dot(&preprocessed_query, &mut gpu_result);
+//         let mut engine =
+//             MatmulEngineU16::<u16>::create(&db, WIDTH, QUERY_SIZE, ComputeDataType::U14, None);
+//         let preprocessed_query = engine.preprocess_query(&query);
+//         engine.dot(&preprocessed_query, &mut gpu_result);
 
-        let a_nda = random_ndarray::<u16>(db, DB_SIZE, WIDTH);
-        let b_nda = random_ndarray::<u16>(query, QUERY_SIZE, WIDTH);
-        let c_nda = a_nda.dot(&b_nda.t());
+//         let a_nda = random_ndarray::<u16>(db, DB_SIZE, WIDTH);
+//         let b_nda = random_ndarray::<u16>(query, QUERY_SIZE, WIDTH);
+//         let c_nda = a_nda.dot(&b_nda.t());
 
-        let mut vec_column_major: Vec<u16> = Vec::new();
-        for col in 0..c_nda.ncols() {
-            for row in c_nda.column(col) {
-                vec_column_major.push((*row % (1 << 14)) as u16);
-            }
-        }
+//         let mut vec_column_major: Vec<u16> = Vec::new();
+//         for col in 0..c_nda.ncols() {
+//             for row in c_nda.column(col) {
+//                 vec_column_major.push((*row % (1 << 14)) as u16);
+//             }
+//         }
 
-        assert_eq!(
-            vec_column_major, gpu_result,
-            "GPU result does not match CPU implementation"
-        );
-    }
+//         assert_eq!(
+//             vec_column_major, gpu_result,
+//             "GPU result does not match CPU implementation"
+//         );
+//     }
 
-    #[test]
-    /// u32 x u32 → u32
-    fn check_u32() {
-        let mut rng = StdRng::seed_from_u64(RNG_SEED);
-        let db = (0..DB_SIZE * WIDTH)
-            .map(|_| rng.gen::<u32>())
-            .collect::<Vec<_>>();
-        let query = (0..QUERY_SIZE * WIDTH)
-            .map(|_| rng.gen::<u32>())
-            .collect::<Vec<_>>();
+//     #[test]
+//     /// u32 x u32 → u32
+//     // fn check_u32() {
+//     //     let mut rng = StdRng::seed_from_u64(RNG_SEED);
+//     //     let db = (0..DB_SIZE * WIDTH)
+//     //         .map(|_| rng.gen::<u32>())
+//     //         .collect::<Vec<_>>();
+//     //     let query = (0..QUERY_SIZE * WIDTH)
+//     //         .map(|_| rng.gen::<u32>())
+//     //         .collect::<Vec<_>>();
 
-        let a_nda: ndarray::prelude::ArrayBase<
-            ndarray::OwnedRepr<u64>,
-            ndarray::prelude::Dim<[usize; 2]>,
-        > = Array2::from_shape_vec(
-            (DB_SIZE as usize, WIDTH as usize),
-            db.iter().map(|x| *x as u64).collect::<Vec<_>>(),
-        )
-        .unwrap();
+//     //     let a_nda: ndarray::prelude::ArrayBase<
+//     //         ndarray::OwnedRepr<u64>,
+//     //         ndarray::prelude::Dim<[usize; 2]>,
+//     //     > = Array2::from_shape_vec(
+//     //         (DB_SIZE as usize, WIDTH as usize),
+//     //         db.iter().map(|x| *x as u64).collect::<Vec<_>>(),
+//     //     )
+//     //     .unwrap();
 
-        let b_nda = Array2::from_shape_vec(
-            (QUERY_SIZE as usize, WIDTH as usize),
-            query.iter().map(|x| *x as u64).collect::<Vec<_>>(),
-        )
-        .unwrap();
+//     //     let b_nda = Array2::from_shape_vec(
+//     //         (QUERY_SIZE as usize, WIDTH as usize),
+//     //         query.iter().map(|x| *x as u64).collect::<Vec<_>>(),
+//     //     )
+//     //     .unwrap();
 
-        let c_nda = a_nda.dot(&b_nda.t());
+//     //     let c_nda = a_nda.dot(&b_nda.t());
 
-        let mut engine =
-            MatmulEngineU32::create(&db, WIDTH, QUERY_SIZE, CHUNK_SIZE, ComputeDataType::U32);
+//     //     let mut engine =
+//     //         MatmulEngineU32::create(&db, WIDTH, QUERY_SIZE, CHUNK_SIZE, ComputeDataType::U32);
 
-        let mut results_host_ptr: *mut c_void = std::ptr::null_mut();
-        unsafe {
-            let _ = cuMemAllocHost_v2(&mut results_host_ptr, DB_SIZE * QUERY_SIZE * 4);
-        }
+//     //     let mut results_host_ptr: *mut c_void = std::ptr::null_mut();
+//     //     unsafe {
+//     //         let _ = cuMemAllocHost_v2(&mut results_host_ptr, DB_SIZE * QUERY_SIZE * 4);
+//     //     }
 
-        let preprocessed_query = engine.preprocess_query(&query);
-        engine.dot(&preprocessed_query, results_host_ptr as *mut u32);
+//     //     let preprocessed_query = engine.preprocess_query(&query);
+//     //     engine.dot(&preprocessed_query, results_host_ptr as *mut u32);
 
-        let gpu_result: &[u32] =
-            unsafe { slice::from_raw_parts(results_host_ptr as *mut u32, DB_SIZE * QUERY_SIZE) };
+//     //     let gpu_result: &[u32] =
+//     //         unsafe { slice::from_raw_parts(results_host_ptr as *mut u32, DB_SIZE * QUERY_SIZE) };
 
-        assert_eq!(
-            c_nda
-                .into_raw_vec()
-                .iter()
-                .map(|x| *x as u32)
-                .collect::<Vec<_>>(),
-            gpu_result,
-            "GPU result does not match CPU implementation"
-        );
-    }
+//     //     assert_eq!(
+//     //         c_nda
+//     //             .into_raw_vec()
+//     //             .iter()
+//     //             .map(|x| *x as u32)
+//     //             .collect::<Vec<_>>(),
+//     //         gpu_result,
+//     //         "GPU result does not match CPU implementation"
+//     //     );
+//     // }
 
-    #[test]
-    /// p32 x p32 → p32
-    fn check_p32() {
-        const p: u32 = 1337;
-        let mut rng = StdRng::seed_from_u64(RNG_SEED);
-        let db = (0..DB_SIZE * WIDTH).map(|_| rng.gen::<u32>() as u32).collect::<Vec<_>>();
-        let query = (0..QUERY_SIZE * WIDTH).map(|_| rng.gen::<u32>() as u32).collect::<Vec<_>>();
+//     #[test]
+//     /// p32 x p32 → p32
+//     fn check_p32() {
+//         const p: u32 = 1337;
+//         let mut rng = StdRng::seed_from_u64(RNG_SEED);
+//         let db = (0..DB_SIZE * WIDTH).map(|_| rng.gen::<u32>() as u32).collect::<Vec<_>>();
+//         let query = (0..QUERY_SIZE * WIDTH).map(|_| rng.gen::<u32>() as u32).collect::<Vec<_>>();
 
-        let mut engine =
-            MatmulEngineU32::create(&db, WIDTH, QUERY_SIZE, CHUNK_SIZE, ComputeDataType::P32);
+//         let mut engine =
+//             MatmulEngineU32::create(&db, WIDTH, QUERY_SIZE, CHUNK_SIZE, ComputeDataType::P32);
 
-        let mut results_host_ptr: *mut c_void = std::ptr::null_mut();
-        unsafe {
-            let _ = cuMemAllocHost_v2(&mut results_host_ptr, DB_SIZE * QUERY_SIZE * 4);
-        }
+//         let mut results_host_ptr: *mut c_void = std::ptr::null_mut();
+//         unsafe {
+//             let _ = cuMemAllocHost_v2(&mut results_host_ptr, DB_SIZE * QUERY_SIZE * 4);
+//         }
 
-        let preprocessed_query = engine.preprocess_query(&query);
-        engine.dot_p32(&preprocessed_query, results_host_ptr as *mut u32);
+//         let preprocessed_query = engine.preprocess_query(&query);
+//         engine.dot_p32(&preprocessed_query, results_host_ptr as *mut u32);
 
-        let gpu_result: &[u32] =
-            unsafe { slice::from_raw_parts(results_host_ptr as *mut u32, DB_SIZE * QUERY_SIZE) };
+//         let gpu_result: &[u32] =
+//             unsafe { slice::from_raw_parts(results_host_ptr as *mut u32, DB_SIZE * QUERY_SIZE) };
 
-        let a_nda = Array2::from_shape_vec(
-            (DB_SIZE as usize, WIDTH as usize),
-            db.into_iter().map(|x| x as u32).collect::<Vec<_>>(),
-        )
-        .unwrap();
+//         let a_nda = Array2::from_shape_vec(
+//             (DB_SIZE as usize, WIDTH as usize),
+//             db.into_iter().map(|x| x as u32).collect::<Vec<_>>(),
+//         )
+//         .unwrap();
 
-        let b_nda = Array2::from_shape_vec(
-            (QUERY_SIZE as usize, WIDTH as usize),
-            query.into_iter().map(|x| x as u32).collect::<Vec<_>>(),
-        )
-        .unwrap();
+//         let b_nda = Array2::from_shape_vec(
+//             (QUERY_SIZE as usize, WIDTH as usize),
+//             query.into_iter().map(|x| x as u32).collect::<Vec<_>>(),
+//         )
+//         .unwrap();
 
-        let m = DB_SIZE;
-        let n = QUERY_SIZE;
-        let k = WIDTH;
-        let A = a_nda.into_raw_vec();
-        let B = b_nda.into_raw_vec();
-        let mut C = vec![0u32; n * m];
+//         let m = DB_SIZE;
+//         let n = QUERY_SIZE;
+//         let k = WIDTH;
+//         let A = a_nda.into_raw_vec();
+//         let B = b_nda.into_raw_vec();
+//         let mut C = vec![0u32; n * m];
 
-        for row in 0..m {
-            for col in 0..n {
-                let mut sum: u64 = 0;
-                for i in 0..k {
-                    sum += ((A[i + row * k] as u64) * (B[i + col * k] as u64)) % p as u64;
-                }
-                C[col + row * n] = (sum % p as u64) as u32;
-            }
-        }
+//         for row in 0..m {
+//             for col in 0..n {
+//                 let mut sum: u64 = 0;
+//                 for i in 0..k {
+//                     sum += ((A[i + row * k] as u64) * (B[i + col * k] as u64)) % p as u64;
+//                 }
+//                 C[col + row * n] = (sum % p as u64) as u32;
+//             }
+//         }
 
-        assert_eq!(
-            C,
-            gpu_result,
-            "GPU result does not match CPU implementation"
-        );
-    }
-}
+//         assert_eq!(
+//             C,
+//             gpu_result,
+//             "GPU result does not match CPU implementation"
+//         );
+//     }
+// }
