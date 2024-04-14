@@ -28,8 +28,12 @@ lto = "fat"
 codegen-units = 1
 debug = true
 
+#[[bench]]
+#name = "engines"
+#harness = false
+
 [[bench]]
-name = "engines"
+name = "matmul"
 harness = false
 
 #[[bench]]

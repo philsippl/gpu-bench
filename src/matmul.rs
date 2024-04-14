@@ -4,7 +4,7 @@ use cudarc::{
     cublas::CudaBlas,
     driver::{
         result, sys::cuMemcpyDtoHAsync_v2, CudaDevice, CudaFunction, CudaSlice, DevicePtr,
-        LaunchAsync, LaunchConfig,
+        DeviceRepr, LaunchAsync, LaunchConfig,
     },
     nvrtc::compile_ptx,
 };
@@ -12,50 +12,16 @@ use num_traits::PrimInt;
 
 use crate::gemm;
 
-const PTX_SRC: &str = "
-template<typename T, size_t LIMBS>
-__global__ void reduce(int* intermediate, T* output, unsigned int* aSums, int* bSums, size_t n, size_t m, size_t k, size_t offset, size_t chunkSize, size_t chunkIdx) {
-    size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
+const PTX_SRC: &str = include_str!("kernel.cu");
 
-    if (idx < chunkSize*m) {
-        unsigned int as[LIMBS] = {};
-        unsigned int bs[LIMBS] = {};
-
-        size_t vIdx = (idx/chunkSize) * n + (idx % chunkSize) + chunkIdx*chunkSize;
-        for (int i=0;i<LIMBS;i++) {
-            as[i] = aSums[(i * n) + (vIdx % n)];
-            bs[i] = bSums[(i * m) + (vIdx / n)] + k * 128;
-        }
-
-        T result = intermediate[idx];
-        for (int i=0;i<LIMBS;i++) {
-            for (int j=0;j<LIMBS;j++) {
-                if ((i+j) >= LIMBS) continue;
-                result += (((as[i] + bs[j]) << 7) - (k * 16384)) << (8 * (i + j));
-            }
-        }
-
-        // transpose output
-        output[idx/chunkSize + (idx % chunkSize) * m + offset] = result;
-    }
-}
-
-extern \"C\" __global__ void reduce_u32(int* intermediate, unsigned int* output, unsigned int* aSums, int* bSums, size_t n, size_t m, size_t k, size_t offset, size_t chunkSize, size_t chunkIdx) {
-    reduce<unsigned int, 4>(intermediate, output, aSums, bSums, n, m, k, offset, chunkSize, chunkIdx);
-}
-
-extern \"C\" __global__ void reduce_u16(int* intermediate, unsigned short* output, unsigned int* aSums, int* bSums, size_t n, size_t m, size_t k, size_t offset, size_t chunkSize, size_t chunkIdx) {
-    reduce<unsigned short, 2>(intermediate, output, aSums, bSums, n, m, k, offset, chunkSize, chunkIdx);
-}
-";
-
-pub struct RingMatmul {
+pub struct MatmulEngine<T> {
     entry_size: usize,
     db_length: usize,
     query_length: usize,
     dev: Arc<CudaDevice>,
     blas: CudaBlas,
     limbs: usize,
+    p: Option<T>,
     db: Vec<CudaSlice<u8>>,
     db_sums: CudaSlice<u32>,
     query_sums: CudaSlice<i32>,
@@ -66,12 +32,16 @@ pub struct RingMatmul {
     chunk_size: usize,
 }
 
-impl RingMatmul {
-    pub fn create<T: PrimInt>(
+impl<T> MatmulEngine<T>
+where
+    T: PrimInt + DeviceRepr,
+{
+    pub fn create(
         db_entries: &[T],
         entry_size: usize,
         query_length: usize,
         chunk_size: usize,
+        p: Option<T>,
     ) -> Self {
         let limbs = size_of::<T>();
         let db_length = db_entries.len() / entry_size;
@@ -80,9 +50,11 @@ impl RingMatmul {
         let blas = CudaBlas::new(dev.clone()).unwrap();
 
         let ptx = compile_ptx(PTX_SRC).unwrap();
-        let function_name = match limbs {
-            2 => "reduce_u16",
-            4 => "reduce_u32",
+        let function_name = match (limbs, p) {
+            (2, None) => "reduce_u16",
+            (4, None) => "reduce_u32",
+            (2, Some(_)) => "reduce_p16",
+            (4, Some(_)) => "reduce_p32",
             _ => unimplemented!(),
         };
 
@@ -137,16 +109,23 @@ impl RingMatmul {
 
         let results: CudaSlice<i32> = dev.alloc_zeros(db_length * query_length).unwrap();
 
-        let intermediate_results: CudaSlice<i32> =
-            dev.alloc_zeros(db_length * query_length).unwrap(); // TODO
+        let intermediate_results_len = match p {
+            Some(_) => limbs * limbs,
+            None => 1,
+        };
 
-        RingMatmul {
+        let intermediate_results: CudaSlice<i32> = dev
+            .alloc_zeros(db_length * query_length * intermediate_results_len)
+            .unwrap(); // TODO
+
+        MatmulEngine {
             entry_size,
             db_length,
             query_length,
             dev,
             blas,
             limbs,
+            p,
             db,
             db_sums,
             query_sums,
@@ -158,7 +137,7 @@ impl RingMatmul {
         }
     }
 
-    pub fn preprocess_query<T: PrimInt>(&self, query: &[T]) -> Vec<Vec<u8>> {
+    pub fn preprocess_query(&self, query: &[T]) -> Vec<Vec<u8>> {
         let mut result = vec![];
         for _ in 0..self.limbs {
             result.push(vec![0u8; query.len()]);
@@ -166,7 +145,7 @@ impl RingMatmul {
 
         for (idx, entry) in query.iter().enumerate() {
             for i in 0..self.limbs {
-                let tmp =(&entry.to_u32().unwrap() >> (i * 8)) as u8;
+                let tmp = (&entry.to_u32().unwrap() >> (i * 8)) as u8;
                 result[i][idx] = (tmp as i32 - 128) as u8;
             }
         }
@@ -174,7 +153,7 @@ impl RingMatmul {
         result.to_vec()
     }
 
-    pub fn dot<T: PrimInt>(&mut self, preprocessed_query: &Vec<Vec<u8>>, results_host: *mut T) {
+    pub fn dot(&mut self, preprocessed_query: &Vec<Vec<u8>>, results_host: *mut T) {
         let b_dev = preprocessed_query
             .iter()
             .map(|b| self.dev.htod_sync_copy(b).unwrap())
@@ -222,7 +201,7 @@ impl RingMatmul {
         for chunk_idx in 0..self.db_length / self.chunk_size {
             for i in 0..self.limbs {
                 for j in 0..self.limbs {
-                    if i + j >= self.limbs {
+                    if self.p.is_none() && i + j >= self.limbs {
                         continue;
                     }
 
@@ -233,12 +212,24 @@ impl RingMatmul {
                         &mut self.intermediate_results,
                         (chunk_idx * self.entry_size * self.chunk_size) as u64,
                         0,
-                        0,
+                        if self.p.is_some() {
+                            ((i * self.limbs + j) * self.query_length * self.chunk_size * 4) as u64
+                        } else {
+                            0
+                        },
                         self.chunk_size,
                         self.query_length,
                         self.entry_size,
-                        (1 << 8 * (i + j)) as i32,
-                        if i + j == 0 { 0 } else { 1 },
+                        if self.p.is_some() {
+                            1
+                        } else {
+                            1 << 8 * (i + j)
+                        },
+                        if self.p.is_some() || (i + j == 0) {
+                            0
+                        } else {
+                            1
+                        },
                     );
                 }
             }
@@ -258,7 +249,7 @@ impl RingMatmul {
                         (chunk_idx * self.chunk_size * self.query_length) as u64,
                         self.chunk_size as u64,
                         chunk_idx as u64,
-                        self.limbs,
+                        self.p.unwrap_or(T::zero()),
                     ),
                 )
             }
@@ -270,9 +261,9 @@ impl RingMatmul {
 
             unsafe {
                 let _ = cuMemcpyDtoHAsync_v2(
-                    results_host
-                        .byte_offset((self.chunk_size * chunk_idx * self.query_length * self.limbs) as isize)
-                        as *mut c_void,
+                    results_host.byte_offset(
+                        (self.chunk_size * chunk_idx * self.query_length * self.limbs) as isize,
+                    ) as *mut c_void,
                     *self.results.device_ptr()
                         + (self.chunk_size * chunk_idx * self.query_length * self.limbs) as u64,
                     self.chunk_size * self.query_length * self.limbs,
@@ -298,7 +289,7 @@ mod tests {
     use ndarray::Array2;
     use rand::{rngs::StdRng, Rng, SeedableRng};
 
-    use crate::ring::RingMatmul;
+    use crate::matmul::MatmulEngine;
     const WIDTH: usize = 12_800;
     const QUERY_SIZE: usize = 31;
     const DB_SIZE: usize = 1000;
@@ -306,6 +297,7 @@ mod tests {
     const RNG_SEED: u64 = 1337;
 
     #[test]
+    // u32 ring
     fn check_u32() {
         let mut rng = StdRng::seed_from_u64(RNG_SEED);
         let db = (0..DB_SIZE * WIDTH)
@@ -332,7 +324,7 @@ mod tests {
 
         let c_nda = a_nda.dot(&b_nda.t());
 
-        let mut engine = RingMatmul::create(&db, WIDTH, QUERY_SIZE, CHUNK_SIZE);
+        let mut engine = MatmulEngine::create(&db, WIDTH, QUERY_SIZE, CHUNK_SIZE, None);
 
         let mut results_host_ptr: *mut c_void = std::ptr::null_mut();
         unsafe {
@@ -357,6 +349,7 @@ mod tests {
     }
 
     #[test]
+    // u16 ring
     fn check_u16() {
         let mut rng = StdRng::seed_from_u64(RNG_SEED);
         let db = (0..DB_SIZE * WIDTH)
@@ -383,7 +376,7 @@ mod tests {
 
         let c_nda = a_nda.dot(&b_nda.t());
 
-        let mut engine = RingMatmul::create(&db, WIDTH, QUERY_SIZE, CHUNK_SIZE);
+        let mut engine = MatmulEngine::create(&db, WIDTH, QUERY_SIZE, CHUNK_SIZE, None);
 
         let mut results_host_ptr: *mut c_void = std::ptr::null_mut();
         unsafe {
@@ -403,6 +396,119 @@ mod tests {
                 .map(|x| *x as u16)
                 .collect::<Vec<_>>(),
             gpu_result,
+            "GPU result does not match CPU implementation"
+        );
+    }
+
+    #[test]
+    /// 16 bit prime field
+    fn check_p16() {
+        const P: u16 = ((1u32 << 16) - 17) as u16;
+        let mut rng = StdRng::seed_from_u64(RNG_SEED);
+        let db = (0..DB_SIZE * WIDTH)
+            .map(|_| rng.gen_range(0..P))
+            .collect::<Vec<_>>();
+        let query = (0..QUERY_SIZE * WIDTH)
+            .map(|_| rng.gen_range(0..P))
+            .collect::<Vec<_>>();
+
+        let a_nda: ndarray::prelude::ArrayBase<
+            ndarray::OwnedRepr<u64>,
+            ndarray::prelude::Dim<[usize; 2]>,
+        > = Array2::from_shape_vec(
+            (DB_SIZE as usize, WIDTH as usize),
+            db.iter().map(|x| *x as u64).collect::<Vec<_>>(),
+        )
+        .unwrap();
+
+        let b_nda = Array2::from_shape_vec(
+            (QUERY_SIZE as usize, WIDTH as usize),
+            query.iter().map(|x| *x as u64).collect::<Vec<_>>(),
+        )
+        .unwrap();
+
+        let c_nda = a_nda.dot(&b_nda.t());
+
+        let mut engine = MatmulEngine::create(&db, WIDTH, QUERY_SIZE, CHUNK_SIZE, Some(P));
+
+        let mut results_host_ptr: *mut c_void = std::ptr::null_mut();
+        unsafe {
+            let _ = cuMemAllocHost_v2(&mut results_host_ptr, DB_SIZE * QUERY_SIZE * 2);
+        }
+
+        let preprocessed_query = engine.preprocess_query(&query);
+        engine.dot(&preprocessed_query, results_host_ptr as *mut u16);
+
+        let gpu_result: &[u16] =
+            unsafe { slice::from_raw_parts(results_host_ptr as *mut u16, DB_SIZE * QUERY_SIZE) };
+
+        assert_eq!(
+            c_nda
+                .into_raw_vec()
+                .iter()
+                .map(|x| (*x % (P as u64)) as u16)
+                .collect::<Vec<_>>(),
+            gpu_result,
+            "GPU result does not match CPU implementation"
+        );
+    }
+
+    #[test]
+    /// 32 bit prime field
+    fn check_p32() {
+        const P: u32 = 4294967291;
+        let mut rng = StdRng::seed_from_u64(RNG_SEED);
+        let db = (0..DB_SIZE * WIDTH)
+            .map(|_| rng.gen_range(0..P))
+            .collect::<Vec<_>>();
+        let query = (0..QUERY_SIZE * WIDTH)
+            .map(|_| rng.gen_range(0..P))
+            .collect::<Vec<_>>();
+
+        let mut engine = MatmulEngine::create(&db, WIDTH, QUERY_SIZE, CHUNK_SIZE, Some(P));
+
+        let mut results_host_ptr: *mut c_void = std::ptr::null_mut();
+        unsafe {
+            let _ = cuMemAllocHost_v2(&mut results_host_ptr, DB_SIZE * QUERY_SIZE * 4);
+        }
+
+        let preprocessed_query = engine.preprocess_query(&query);
+        engine.dot(&preprocessed_query, results_host_ptr as *mut u32);
+
+        let gpu_result: &[u32] =
+            unsafe { slice::from_raw_parts(results_host_ptr as *mut u32, DB_SIZE * QUERY_SIZE) };
+
+        let a_nda = Array2::from_shape_vec(
+            (DB_SIZE as usize, WIDTH as usize),
+            db.into_iter().map(|x| x as u32).collect::<Vec<_>>(),
+        )
+        .unwrap();
+
+        let b_nda = Array2::from_shape_vec(
+            (QUERY_SIZE as usize, WIDTH as usize),
+            query.into_iter().map(|x| x as u32).collect::<Vec<_>>(),
+        )
+        .unwrap();
+
+        let m = DB_SIZE;
+        let n = QUERY_SIZE;
+        let k = WIDTH;
+        let A = a_nda.into_raw_vec();
+        let B = b_nda.into_raw_vec();
+        let mut C = vec![0u32; n * m];
+
+        for row in 0..m {
+            for col in 0..n {
+                let mut sum: u64 = 0;
+                for i in 0..k {
+                    sum += ((A[i + row * k] as u64) * (B[i + col * k] as u64)) % P as u64;
+                }
+                C[col + row * n] = (sum % P as u64) as u32;
+            }
+        }
+
+        assert_eq!(
+            C, gpu_result,
             "GPU result does not match CPU implementation"
         );
     }
