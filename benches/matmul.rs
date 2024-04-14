@@ -1,4 +1,4 @@
-use std::ffi::c_void;
+use std::{ffi::c_void, thread, time::Duration};
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion, Throughput};
 use cudarc::driver::sys::cuMemAllocHost_v2;
@@ -18,6 +18,7 @@ fn bench_u16(c: &mut Criterion) {
         let mut rng = StdRng::seed_from_u64(RNG_SEED);
 
         for &query_size in QUERY_SIZES {
+            thread::sleep(Duration::from_millis(5000));
             let db = (0..DB_SIZE * WIDTH)
                 .map(|_| rng.gen::<u16>())
                 .collect::<Vec<_>>();
@@ -42,7 +43,6 @@ fn bench_u16(c: &mut Criterion) {
                     });
                 },
             );
-            engine.cleanup();
         }
     }
 }
@@ -55,6 +55,7 @@ fn bench_p16(c: &mut Criterion) {
         let mut rng = StdRng::seed_from_u64(RNG_SEED);
 
         for &query_size in QUERY_SIZES {
+            thread::sleep(Duration::from_millis(5000));
             let db = (0..DB_SIZE * WIDTH)
                 .map(|_| rng.gen_range(0..P))
                 .collect::<Vec<_>>();
@@ -79,7 +80,6 @@ fn bench_p16(c: &mut Criterion) {
                     });
                 },
             );
-            engine.cleanup();
         }
     }
 }
@@ -91,6 +91,7 @@ fn bench_u32(c: &mut Criterion) {
         let mut rng = StdRng::seed_from_u64(RNG_SEED);
 
         for &query_size in QUERY_SIZES {
+            thread::sleep(Duration::from_millis(5000));
             let db = (0..DB_SIZE * WIDTH)
                 .map(|_| rng.gen::<u32>())
                 .collect::<Vec<_>>();
@@ -115,7 +116,6 @@ fn bench_u32(c: &mut Criterion) {
                     });
                 },
             );
-            engine.cleanup();
         }
     }
 }
@@ -128,6 +128,7 @@ fn bench_p32(c: &mut Criterion) {
         let mut rng = StdRng::seed_from_u64(RNG_SEED);
 
         for &query_size in QUERY_SIZES {
+            thread::sleep(Duration::from_millis(5000));
             let db = (0..DB_SIZE * WIDTH)
                 .map(|_| rng.gen_range(0..P))
                 .collect::<Vec<_>>();
@@ -152,7 +153,6 @@ fn bench_p32(c: &mut Criterion) {
                     });
                 },
             );
-            engine.cleanup();
         }
     }
 }
