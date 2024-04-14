@@ -115,7 +115,7 @@ where
         };
 
         let intermediate_results: CudaSlice<i32> = dev
-            .alloc_zeros(db_length * query_length * intermediate_results_len)
+            .alloc_zeros(chunk_size * query_length * intermediate_results_len)
             .unwrap(); // TODO
 
         MatmulEngine {

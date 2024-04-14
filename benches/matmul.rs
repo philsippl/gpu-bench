@@ -6,10 +6,10 @@ use gpu_bench::{matmul::MatmulEngine, ComputeDataType, MatmulEngineU16, MatmulEn
 use rand::{rngs::StdRng, Rng, SeedableRng};
 
 const WIDTH: usize = 12_800;
-const DB_SIZE: usize = 200_000;
+const DB_SIZE: usize = 300_000;
 const CHUNK_SIZE: usize = 10_000;
 const RNG_SEED: u64 = 40;
-const QUERY_SIZES: &[usize] = &[620, 930, 1550];
+const QUERY_SIZES: &[usize] = &[310, 620, 930, 1550, 2480];
 
 fn bench_u16(c: &mut Criterion) {
     let mut group = c.benchmark_group("bench_u16");
@@ -141,5 +141,5 @@ fn bench_p32(c: &mut Criterion) {
     }
 }
 
-criterion_group!(benches, bench_p16, bench_u32, bench_p32);
+criterion_group!(benches, bench_u16, bench_p16, bench_u32, bench_p32);
 criterion_main!(benches);
