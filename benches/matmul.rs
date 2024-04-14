@@ -13,6 +13,7 @@ const QUERY_SIZES: &[usize] = &[310, 620, 930, 1550, 2480];
 
 fn bench_u16(c: &mut Criterion) {
     let mut group = c.benchmark_group("bench_u16");
+    group.sample_size(10);
     let mut rng = StdRng::seed_from_u64(RNG_SEED);
 
     for &query_size in QUERY_SIZES {
@@ -46,6 +47,7 @@ fn bench_u16(c: &mut Criterion) {
 fn bench_p16(c: &mut Criterion) {
     const P: u16 = ((1u32 << 16) - 17) as u16;
     let mut group = c.benchmark_group("bench_p16");
+    group.sample_size(10);
     let mut rng = StdRng::seed_from_u64(RNG_SEED);
 
     for &query_size in QUERY_SIZES {
@@ -78,6 +80,7 @@ fn bench_p16(c: &mut Criterion) {
 
 fn bench_u32(c: &mut Criterion) {
     let mut group = c.benchmark_group("bench_u32");
+    group.sample_size(10);
     let mut rng = StdRng::seed_from_u64(RNG_SEED);
 
     for &query_size in QUERY_SIZES {
@@ -111,6 +114,7 @@ fn bench_u32(c: &mut Criterion) {
 fn bench_p32(c: &mut Criterion) {
     const P: u32 = 4294967291;
     let mut group = c.benchmark_group("bench_p32");
+    group.sample_size(10);
     let mut rng = StdRng::seed_from_u64(RNG_SEED);
 
     for &query_size in QUERY_SIZES {
