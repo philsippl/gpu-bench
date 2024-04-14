@@ -9,26 +9,31 @@ const WIDTH: usize = 12_800;
 const DB_SIZE: usize = 300_000;
 const CHUNK_SIZES: &[usize] = &[50_000];
 const RNG_SEED: u64 = 40;
-const QUERY_SIZES: &[usize] = &[31, 62, 93, 124, 155, 186, 217, 248, 279, 310, 341, 372, 403, 434, 465, 496, 527, 558, 589, 620, 651, 682, 713, 744, 775, 806, 837, 868, 899, 930, 961, 992, 1023, 1054, 1085, 1116, 1147, 1178, 1209, 1240, 1271, 1302, 1333, 1364, 1395, 1426, 1457, 1488, 1519, 1550];
+const QUERY_SIZES: &[usize] = &[
+    31, 62, 93, 124, 155, 186, 217, 248, 279, 310, 341, 372, 403, 434, 465, 496, 527, 558, 589,
+    620, 651, 682, 713, 744, 775, 806, 837, 868, 899, 930, 961, 992, 1023, 1054, 1085, 1116, 1147,
+    1178, 1209, 1240, 1271, 1302, 1333, 1364, 1395, 1426, 1457, 1488, 1519, 1550,
+];
 
 fn bench_u16(c: &mut Criterion) {
+    let mut rng = StdRng::seed_from_u64(RNG_SEED);
+    let db = (0..DB_SIZE * WIDTH)
+        .map(|_| rng.gen::<u16>())
+        .collect::<Vec<_>>();
+
     for &chunk_size in CHUNK_SIZES {
         let mut group = c.benchmark_group(format!("bench_u16_{}", chunk_size));
         group.sample_size(10);
-        let mut rng = StdRng::seed_from_u64(RNG_SEED);
+        let mut engine = MatmulEngine::create(&db, WIDTH, 1, chunk_size, None);
 
         for &query_size in QUERY_SIZES {
-            thread::sleep(Duration::from_millis(5000));
-            let db = (0..DB_SIZE * WIDTH)
-                .map(|_| rng.gen::<u16>())
-                .collect::<Vec<_>>();
+            group.throughput(Throughput::Elements((DB_SIZE * query_size / 31) as u64));
+            engine.resize_query(query_size);
 
             let query = (0..query_size * WIDTH)
                 .map(|_| rng.gen::<u16>())
                 .collect::<Vec<_>>();
 
-            group.throughput(Throughput::Elements((DB_SIZE * query_size / 31) as u64));
-            let mut engine = MatmulEngine::create(&db, WIDTH, query_size, chunk_size, None);
             let preprocessed_query = engine.preprocess_query(&query);
             let mut results_host_ptr: *mut c_void = std::ptr::null_mut();
             unsafe {
@@ -49,23 +54,25 @@ fn bench_u16(c: &mut Criterion) {
 
 fn bench_p16(c: &mut Criterion) {
     const P: u16 = ((1u32 << 16) - 17) as u16;
+    let mut rng = StdRng::seed_from_u64(RNG_SEED);
+    let db = (0..DB_SIZE * WIDTH)
+        .map(|_| rng.gen_range(0..P))
+        .collect::<Vec<_>>();
+
     for &chunk_size in CHUNK_SIZES {
         let mut group = c.benchmark_group(format!("bench_p16_{}", chunk_size));
         group.sample_size(10);
-        let mut rng = StdRng::seed_from_u64(RNG_SEED);
+
+        let mut engine = MatmulEngine::create(&db, WIDTH, 1, chunk_size, Some(P));
 
         for &query_size in QUERY_SIZES {
-            thread::sleep(Duration::from_millis(5000));
-            let db = (0..DB_SIZE * WIDTH)
-                .map(|_| rng.gen_range(0..P))
-                .collect::<Vec<_>>();
+            group.throughput(Throughput::Elements((DB_SIZE * query_size / 31) as u64));
+            engine.resize_query(query_size);
 
             let query = (0..query_size * WIDTH)
                 .map(|_| rng.gen_range(0..P))
                 .collect::<Vec<_>>();
 
-            group.throughput(Throughput::Elements((DB_SIZE * query_size / 31) as u64));
-            let mut engine = MatmulEngine::create(&db, WIDTH, query_size, chunk_size, Some(P));
             let preprocessed_query = engine.preprocess_query(&query);
             let mut results_host_ptr: *mut c_void = std::ptr::null_mut();
             unsafe {
@@ -89,19 +96,20 @@ fn bench_u32(c: &mut Criterion) {
         let mut group = c.benchmark_group(format!("bench_u32_{}", chunk_size));
         group.sample_size(10);
         let mut rng = StdRng::seed_from_u64(RNG_SEED);
+        let db = (0..DB_SIZE * WIDTH)
+            .map(|_| rng.gen::<u32>())
+            .collect::<Vec<_>>();
+
+        let mut engine = MatmulEngine::create(&db, WIDTH, 1, chunk_size, None);
 
         for &query_size in QUERY_SIZES {
-            thread::sleep(Duration::from_millis(5000));
-            let db = (0..DB_SIZE * WIDTH)
-                .map(|_| rng.gen::<u32>())
-                .collect::<Vec<_>>();
+            group.throughput(Throughput::Elements((DB_SIZE * query_size / 31) as u64));
+            engine.resize_query(query_size);
 
             let query = (0..query_size * WIDTH)
                 .map(|_| rng.gen::<u32>())
                 .collect::<Vec<_>>();
 
-            group.throughput(Throughput::Elements((DB_SIZE * query_size / 31) as u64));
-            let mut engine = MatmulEngine::create(&db, WIDTH, query_size, chunk_size, None);
             let preprocessed_query = engine.preprocess_query(&query);
             let mut results_host_ptr: *mut c_void = std::ptr::null_mut();
             unsafe {
@@ -126,19 +134,20 @@ fn bench_p32(c: &mut Criterion) {
         let mut group = c.benchmark_group(format!("bench_p32_{}", chunk_size));
         group.sample_size(10);
         let mut rng = StdRng::seed_from_u64(RNG_SEED);
+        let db = (0..DB_SIZE * WIDTH)
+            .map(|_| rng.gen_range(0..P))
+            .collect::<Vec<_>>();
+
+        let mut engine = MatmulEngine::create(&db, WIDTH, 1, chunk_size, Some(P));
 
         for &query_size in QUERY_SIZES {
-            thread::sleep(Duration::from_millis(5000));
-            let db = (0..DB_SIZE * WIDTH)
-                .map(|_| rng.gen_range(0..P))
-                .collect::<Vec<_>>();
+            group.throughput(Throughput::Elements((DB_SIZE * query_size / 31) as u64));
+            engine.resize_query(query_size);
 
             let query = (0..query_size * WIDTH)
                 .map(|_| rng.gen_range(0..P))
                 .collect::<Vec<_>>();
 
-            group.throughput(Throughput::Elements((DB_SIZE * query_size / 31) as u64));
-            let mut engine = MatmulEngine::create(&db, WIDTH, query_size, chunk_size, Some(P));
             let preprocessed_query = engine.preprocess_query(&query);
             let mut results_host_ptr: *mut c_void = std::ptr::null_mut();
             unsafe {

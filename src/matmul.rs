@@ -101,11 +101,11 @@ where
             .map(|partial_db| dev.htod_sync_copy(partial_db).unwrap())
             .collect::<Vec<_>>();
 
-        let db_sums = dev.htod_sync_copy(&db_sums_merged).unwrap();
-        let query_sums: CudaSlice<i32> = dev.alloc_zeros(query_length * 4).unwrap();
-
         let ones = vec![1u8; entry_size];
         let ones = dev.htod_sync_copy(&ones).unwrap();
+
+        let db_sums = dev.htod_sync_copy(&db_sums_merged).unwrap();
+        let query_sums: CudaSlice<i32> = dev.alloc_zeros(query_length * 4).unwrap();
 
         let results: CudaSlice<i32> = dev.alloc_zeros(db_length * query_length).unwrap();
 
@@ -116,7 +116,7 @@ where
 
         let intermediate_results: CudaSlice<i32> = dev
             .alloc_zeros(chunk_size * query_length * intermediate_results_len)
-            .unwrap(); // TODO
+            .unwrap();
 
         MatmulEngine {
             entry_size,
@@ -135,6 +135,23 @@ where
             intermediate_results,
             chunk_size,
         }
+    }
+
+    pub fn resize_query(&mut self, query_length: usize) {
+        self.query_sums = self.dev.alloc_zeros(query_length * 4).unwrap();
+
+        self.results = self.dev.alloc_zeros(self.db_length * query_length).unwrap();
+
+        let intermediate_results_len = match self.p {
+            Some(_) => self.limbs * self.limbs,
+            None => 1,
+        };
+
+        self.intermediate_results = self.dev
+            .alloc_zeros(self.chunk_size * query_length * intermediate_results_len)
+            .unwrap();
+
+        self.query_length = query_length;
     }
 
     pub fn preprocess_query(&self, query: &[T]) -> Vec<Vec<u8>> {
