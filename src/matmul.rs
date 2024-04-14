@@ -3,7 +3,7 @@ use std::{ffi::c_void, mem::size_of, ops::BitAnd, sync::Arc};
 use cudarc::{
     cublas::CudaBlas,
     driver::{
-        result, sys::cuMemcpyDtoHAsync_v2, CudaDevice, CudaFunction, CudaSlice, DevicePtr,
+        result::{self, memory_free}, sys::cuMemcpyDtoHAsync_v2, CudaDevice, CudaFunction, CudaSlice, DevicePtr,
         DeviceRepr, LaunchAsync, LaunchConfig,
     },
     nvrtc::compile_ptx,
@@ -276,6 +276,15 @@ where
             unsafe {
                 result::stream::synchronize(stream.stream).unwrap();
             }
+        }
+
+        
+    }
+
+    pub fn cleanup(&self) {
+        unsafe {
+            memory_free(*self.intermediate_results.device_ptr()).unwrap();
+            memory_free(*self.results.device_ptr()).unwrap();
         }
     }
 }
