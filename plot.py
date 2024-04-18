@@ -2,6 +2,7 @@ import os
 import json
 import re
 import matplotlib.pyplot as plt
+import seaborn as sns
 
 def find_benchmark_dirs(root_dir):
     """
@@ -55,17 +56,22 @@ def load_benchmarks(benchmark_dirs):
     return benchmarks
 
 def plot_benchmarks(benchmarks, output_file):
+    prop_cycle = plt.rcParams['axes.prop_cycle']
+    colors = prop_cycle.by_key()['color']
     plt.figure(figsize=(10, 6))
-    for bench, values in benchmarks.items():
+    for idx, (bench, values) in enumerate(benchmarks.items()):
         print(bench)
-        plt.plot(values["x"], values["y"], label=bench, marker='.')
+        for x, y in zip(values["x"], values["y"]):
+            plt.text(x,y+2, int(y), horizontalalignment="center", color=colors[idx])
+        plt.plot(values["x"], values["y"], label=bench, marker='.', color=colors[idx])
 
     plt.xlabel('Batch Size')
     plt.ylabel('Million Queries/s')
-    plt.title('Matmul')
+    plt.title('Matmul H100')
     plt.legend()
     plt.grid(True)
     plt.ylim(ymin=0)
+    
     plt.savefig(output_file, bbox_inches='tight')
 
 # Usage

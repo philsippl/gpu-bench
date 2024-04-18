@@ -1,11 +1,15 @@
+use std::ffi::c_void;
+
 use criterion::{black_box, criterion_group, criterion_main, Criterion, Throughput};
-use gpu_bench::{ComputeDataType, MatmulEngineU16, MatmulEngineU32};
+use cudarc::driver::sys::cuMemAllocHost_v2;
+use gpu_bench::{matmul::MatmulEngine, ComputeDataType, MatmulEngineU16, MatmulEngineU32};
 use rand::{rngs::StdRng, Rng, SeedableRng};
 
 const WIDTH: usize = 12_800;
 const DB_SIZE: usize = 100_000;
+const CHUNK_SIZE: usize = 10_000;
 const RNG_SEED: u64 = 40;
-const QUERY_SIZES: &[usize] = &[31, 155, 310, 620, 930, 1550, 2170];
+const QUERY_SIZES: &[usize] = &[930, 1550];
 
 fn bench_u16(c: &mut Criterion) {
     let mut group = c.benchmark_group("bench_u16");
@@ -168,6 +172,40 @@ fn bench_u14(c: &mut Criterion) {
     }
 }
 
+fn bench_u16_2(c: &mut Criterion) {
+    let mut group = c.benchmark_group("bench_u32");
+    let mut rng = StdRng::seed_from_u64(RNG_SEED);
+
+    for &query_size in QUERY_SIZES {
+        let db = (0..DB_SIZE * WIDTH)
+            .map(|_| rng.gen::<u16>())
+            .collect::<Vec<_>>();
+
+        let query = (0..query_size * WIDTH)
+            .map(|_| rng.gen::<u16>())
+            .collect::<Vec<_>>();
+
+        group.throughput(Throughput::Elements((DB_SIZE * query_size / 31) as u64));
+        let mut engine =
+            MatmulEngine::create(&db, WIDTH, query_size, CHUNK_SIZE, None);
+        let preprocessed_query = engine.preprocess_query(&query);
+        let mut results_host_ptr: *mut c_void = std::ptr::null_mut();
+        unsafe {
+            let _ = cuMemAllocHost_v2(&mut results_host_ptr, DB_SIZE * query_size * 4);
+        }
+
+        group.bench_function(
+            format!("u16 x u16 → u16 ({} x {})", DB_SIZE, query_size),
+            |b| {
+
+                b.iter(|| {
+                    black_box(engine.dot(&preprocessed_query, results_host_ptr as *mut u16));
+                });
+            },
+        );
+    }
+}
+
 fn bench_u32(c: &mut Criterion) {
     let mut group = c.benchmark_group("bench_u32");
     let mut rng = StdRng::seed_from_u64(RNG_SEED);
@@ -181,27 +219,61 @@ fn bench_u32(c: &mut Criterion) {
             .map(|_| rng.gen::<u32>())
             .collect::<Vec<_>>();
 
-        let mut gpu_result = vec![0u32; DB_SIZE * query_size];
-        // unsafe {
-        //     cuMemAllocHost_v2(gpu_result.as_mut_ptr() as *mut _, DB_SIZE * query_size);
-        // }
-
         group.throughput(Throughput::Elements((DB_SIZE * query_size / 31) as u64));
         let mut engine =
-            MatmulEngineU32::create(&db, WIDTH, query_size);
+            MatmulEngine::create(&db, WIDTH, query_size, CHUNK_SIZE, None);
         let preprocessed_query = engine.preprocess_query(&query);
+        let mut results_host_ptr: *mut c_void = std::ptr::null_mut();
+        unsafe {
+            let _ = cuMemAllocHost_v2(&mut results_host_ptr, DB_SIZE * query_size * 4);
+        }
 
         group.bench_function(
             format!("u32 x u32 → u32 ({} x {})", DB_SIZE, query_size),
             |b| {
+
                 b.iter(|| {
-                    black_box(engine.dot(&preprocessed_query, &mut gpu_result));
+                    black_box(engine.dot(&preprocessed_query, results_host_ptr as *mut u32));
                 });
             },
         );
     }
 }
 
-criterion_group!(benches, bench_u16, bench_p16, bench_u16u32, bench_p14, bench_u14, bench_u32);
-// criterion_group!(benches, bench_u32);
+fn bench_p32(c: &mut Criterion) {
+    let mut group = c.benchmark_group("bench_u32");
+    let mut rng = StdRng::seed_from_u64(RNG_SEED);
+
+    for &query_size in QUERY_SIZES {
+        let db = (0..DB_SIZE * WIDTH)
+            .map(|_| rng.gen::<u32>())
+            .collect::<Vec<_>>();
+
+        let query = (0..query_size * WIDTH)
+            .map(|_| rng.gen::<u32>())
+            .collect::<Vec<_>>();
+
+        group.throughput(Throughput::Elements((DB_SIZE * query_size / 31) as u64));
+        let mut engine =
+            MatmulEngineU32::create(&db, WIDTH, query_size, CHUNK_SIZE, ComputeDataType::P32);
+        let preprocessed_query = engine.preprocess_query(&query);
+        let mut results_host_ptr: *mut c_void = std::ptr::null_mut();
+        unsafe {
+            let _ = cuMemAllocHost_v2(&mut results_host_ptr, DB_SIZE * query_size * 4);
+        }
+
+        group.bench_function(
+            format!("p32 x p32 → p32 ({} x {})", DB_SIZE, query_size),
+            |b| {
+
+                b.iter(|| {
+                    black_box(engine.dot_p32(&preprocessed_query, results_host_ptr as *mut u32));
+                });
+            },
+        );
+    }
+}
+
+// criterion_group!(benches, bench_u16, bench_p16, bench_u16u32, bench_p14, bench_u14, bench_u32);
+criterion_group!(benches, bench_u16_2);
 criterion_main!(benches);

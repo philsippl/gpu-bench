@@ -1,8 +1,13 @@
-use std::{ffi::c_void, sync::Arc};
+pub mod matmul;
+
+use core::slice;
+use std::{ffi::c_void, sync::Arc, time::Instant};
 
 use cudarc::{
     cublas::{result::gemm_ex, sys, CudaBlas},
     driver::{
+        result,
+        sys::{cuMemAllocHost_v2, cuMemcpyDtoHAsync_v2, cuMemcpyDtoH_v2},
         CudaDevice, CudaFunction, CudaSlice, DevicePtr, DevicePtrMut, LaunchAsync, LaunchConfig,
     },
     nvrtc::compile_ptx,
@@ -94,31 +99,68 @@ extern \"C\" __global__ void matmul_u14(unsigned int* c, unsigned short* output,
 }
 
 
-extern \"C\" __global__ void matmul_u32(int* c, unsigned int* output, unsigned int* aSums, int* bSums, size_t n, size_t m, size_t k) {
+extern \"C\" __global__ void matmul_u32(int* intermediate, int* output, unsigned int* aSums, int* bSums, size_t n, size_t m, size_t k, size_t offset, size_t chunkSize, size_t chunkIdx) {
     size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
-    size_t numElements = n * m;
 
-    if (idx < numElements) {
+    if (idx < chunkSize*m) {
         unsigned int as[4] = {};
         unsigned int bs[4] = {};
 
+        size_t vIdx = (idx/chunkSize) * n + (idx % chunkSize) + chunkIdx*chunkSize;
         for (int i=0;i<4;i++) {
-            as[i] = aSums[(i * n) + (idx % n)];
-            bs[i] = bSums[(i * m) + (idx / n)] + k * 128;
+            as[i] = aSums[(i * n) + (vIdx % n)];
+            bs[i] = bSums[(i * m) + (vIdx / n)] + k * 128;
         }
 
-        unsigned int result = 0;
+        int result = intermediate[idx];
         for (int i=0;i<4;i++) {
             for (int j=0;j<4;j++) {
-                if ((i+j) > 4) continue;
-                unsigned int tmp = c[idx + numElements * (4 * i + j)] + ((as[i] + bs[j]) << 7) - (k * 16384);
-                tmp <<= 8 * (i + j);
-                result += tmp;
+                if ((i+j) >= 4) continue;
+                result += (((as[i] + bs[j]) << 7) - (k * 16384)) << (8 * (i + j));
             }
         }
 
-        // Calculate the u16 result
-        output[idx] = result;
+        // transpose output
+        output[idx/chunkSize + (idx % chunkSize) * m + offset] = result;
+    }
+}
+
+extern \"C\" __global__ void matmul_p32(int* intermediate, int* output, unsigned int* aSums, int* bSums, size_t n, size_t m, size_t k, size_t offset, size_t chunkSize, size_t chunkIdx, unsigned int p) {
+    size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
+    unsigned long long pp = p;
+
+    if (idx < chunkSize*m) {
+        unsigned int as[4] = {};
+        unsigned int bs[4] = {};
+
+        size_t vIdx = (idx/chunkSize) * n + (idx % chunkSize) + chunkIdx*chunkSize;
+        for (int i=0;i<4;i++) {
+            as[i] = aSums[(i * n) + (vIdx % n)];
+            bs[i] = bSums[(i * m) + (vIdx / n)] + k * 128;
+        }
+
+        int result[16] = {};
+        for (int i=0;i<16;i++) {
+            result[i] = intermediate[idx + chunkSize * m * i];
+        }
+
+        for (int i=0;i<4;i++) {
+            for (int j=0;j<4;j++) {
+                size_t result_idx = i*4+j;
+                result[result_idx] += (((as[i] + bs[j]) << 7) - (k * 16384));
+            }
+        }
+
+        unsigned long long final_result = 0;
+        for (int i=0;i<4;i++) {
+            for (int j=0;j<4;j++) {
+                unsigned long long f = (1ULL << (8*(i+j))) % pp;
+                final_result += ((result[i*4+j] % pp) * f) % pp;
+            }
+        }
+
+        // transpose output
+        output[idx/chunkSize + (idx % chunkSize) * m + offset] = final_result % pp;
     }
 }
 ";
@@ -134,6 +176,8 @@ pub fn gemm(
     m: usize,
     n: usize,
     k: usize,
+    alpha: i32,
+    beta: i32,
 ) {
     unsafe {
         gemm_ex(
@@ -143,14 +187,14 @@ pub fn gemm(
             m as i32,
             n as i32,
             k as i32,
-            &1 as *const i32 as *const c_void,
+            &alpha as *const i32 as *const c_void,
             (*a.device_ptr() + a_offset) as *const _,
             sys::cublasDataType_t::CUDA_R_8I,
             k as i32,
             (*b.device_ptr() + b_offset) as *const _,
             sys::cublasDataType_t::CUDA_R_8I,
             k as i32,
-            &0 as *const i32 as *const c_void,
+            &beta as *const i32 as *const c_void,
             (*c.device_ptr_mut() + c_offset) as *mut _,
             sys::cublasDataType_t::CUDA_R_32I,
             m as i32,
@@ -167,7 +211,9 @@ pub enum ComputeDataType {
     U14,
     U16,
     P16,
+    U16U32,
     U32,
+    P32,
 }
 
 pub struct MatmulEngineU16<T> {
@@ -215,7 +261,7 @@ where
         let function_name = match data_type {
             ComputeDataType::U16 => "matmul_u16",
             ComputeDataType::P16 => "matmul_p16",
-            ComputeDataType::U32 => "matmul_u16u32",
+            ComputeDataType::U16U32 => "matmul_u16u32",
             ComputeDataType::P14 => "matmul_p14",
             ComputeDataType::U14 => "matmul_u14",
             _ => todo!(),
@@ -283,7 +329,7 @@ where
 
         let intermediate_results_count = match data_type {
             ComputeDataType::U14 | ComputeDataType::P14 | ComputeDataType::U16 => 3,
-            ComputeDataType::P16 | ComputeDataType::U32 => 4,
+            ComputeDataType::P16 | ComputeDataType::U16U32 => 4,
             _ => todo!(),
         };
 
@@ -353,6 +399,8 @@ where
                 self.query_length,
                 1,
                 self.entry_size,
+                1,
+                0,
             );
 
             gemm(
@@ -366,6 +414,8 @@ where
                 self.query_length,
                 1,
                 self.entry_size,
+                1,
+                0,
             );
         }
 
@@ -381,6 +431,8 @@ where
             self.db_length,
             self.query_length,
             self.entry_size,
+            1,
+            0,
         );
 
         if self.data_type == ComputeDataType::P14 {
@@ -396,6 +448,8 @@ where
                 self.db_length,
                 self.query_length,
                 self.entry_size,
+                1,
+                0,
             );
 
             let b01_dev = self.dev.htod_sync_copy(&b01).unwrap();
@@ -411,6 +465,8 @@ where
                 self.db_length,
                 self.query_length,
                 self.entry_size,
+                1,
+                0,
             );
         } else {
             // Default byte-wise impl for the rest
@@ -425,6 +481,8 @@ where
                 self.db_length,
                 self.query_length,
                 self.entry_size,
+                1,
+                0,
             );
 
             gemm(
@@ -438,10 +496,14 @@ where
                 self.db_length,
                 self.query_length,
                 self.entry_size,
+                1,
+                0,
             );
 
             // Additional matmul needed with high bytes for u32
-            if (self.data_type == ComputeDataType::P16) | (self.data_type == ComputeDataType::U32) {
+            if (self.data_type == ComputeDataType::P16)
+                | (self.data_type == ComputeDataType::U16U32)
+            {
                 gemm(
                     &self.blas.handle(),
                     &self.db1,
@@ -453,6 +515,8 @@ where
                     self.db_length,
                     self.query_length,
                     self.entry_size,
+                    1,
+                    0,
                 );
             }
         }
@@ -555,19 +619,31 @@ pub struct MatmulEngineU32 {
     query_sums: CudaSlice<i32>,
     ones: CudaSlice<u8>,
     intermediate_results: CudaSlice<i32>,
-    results: CudaSlice<u32>,
+    results: CudaSlice<i32>,
     function: CudaFunction,
+    data_type: ComputeDataType,
+    chunk_size: usize,
 }
 
 impl MatmulEngineU32 {
-    pub fn create(db_entries: &[u32], entry_size: usize, query_length: usize) -> Self {
+    pub fn create(
+        db_entries: &[u32],
+        entry_size: usize,
+        query_length: usize,
+        chunk_size: usize,
+        data_type: ComputeDataType,
+    ) -> Self {
         let db_length = db_entries.len() / entry_size;
         // TODO: specify device id
         let dev = CudaDevice::new(0).unwrap();
         let blas = CudaBlas::new(dev.clone()).unwrap();
 
         let ptx = compile_ptx(PTX_SRC).unwrap();
-        let function_name = "matmul_u32";
+        let function_name = match data_type {
+            ComputeDataType::U32 => "matmul_u32",
+            ComputeDataType::P32 => "matmul_p32",
+            _ => unimplemented!(),
+        };
         dev.load_ptx(ptx, function_name, &[function_name]).unwrap();
         let function = dev.get_func(function_name, function_name).unwrap();
 
@@ -619,7 +695,7 @@ impl MatmulEngineU32 {
         let ones = vec![1u8; entry_size];
         let ones = dev.htod_sync_copy(&ones).unwrap();
 
-        let results: CudaSlice<u32> = dev.alloc_zeros(db_length * query_length).unwrap();
+        let results: CudaSlice<i32> = dev.alloc_zeros(db_length * query_length).unwrap();
 
         let intermediate_results: CudaSlice<i32> =
             dev.alloc_zeros(db_length * query_length * 14).unwrap(); // TODO
@@ -636,7 +712,9 @@ impl MatmulEngineU32 {
             ones,
             results,
             function,
+            data_type,
             intermediate_results,
+            chunk_size,
         }
     }
 
@@ -658,7 +736,7 @@ impl MatmulEngineU32 {
         result.to_vec()
     }
 
-    pub fn dot(&mut self, preprocessed_query: &Vec<Vec<u8>>, results_host: &mut Vec<u32>) {
+    pub fn dot(&mut self, preprocessed_query: &Vec<Vec<u8>>, results_host: *mut u32) {
         let b_dev = preprocessed_query
             .iter()
             .map(|b| self.dev.htod_sync_copy(b).unwrap())
@@ -676,30 +754,12 @@ impl MatmulEngineU32 {
                 self.query_length,
                 1,
                 self.entry_size,
+                1,
+                0,
             );
         }
 
-        for i in 0..4 {
-            for j in 0..4 {
-                if i + j > 4 {
-                    continue;
-                }
-                gemm(
-                    &self.blas.handle(),
-                    &self.db[i],
-                    &b_dev[j],
-                    &mut self.intermediate_results,
-                    0,
-                    0,
-                    ((self.db_length * self.query_length * 4) * (i * 4 + j)) as u64,
-                    self.db_length,
-                    self.query_length,
-                    self.entry_size,
-                );
-            }
-        }
-
-        let num_elements = self.db_length * self.query_length;
+        let num_elements = self.chunk_size * self.query_length;
         let threads_per_block = 256;
         let blocks_per_grid = (num_elements + threads_per_block - 1) / threads_per_block;
         let cfg = LaunchConfig {
@@ -708,31 +768,206 @@ impl MatmulEngineU32 {
             shared_mem_bytes: 0,
         };
 
-        unsafe {
-            self.function.clone().launch(
-                cfg,
-                (
-                    &self.intermediate_results,
-                    &mut self.results,
-                    &self.db_sums,
-                    &self.query_sums,
-                    self.db_length as u64,
-                    self.query_length as u64,
-                    self.entry_size as u64,
-                ),
-            )
-        }
-        .unwrap();
+        let mut blass = vec![];
+        let mut streams = vec![];
 
-        self.dev
-            .dtoh_sync_copy_into(&self.results, results_host)
+        for _ in 0..self.db_length / self.chunk_size {
+            let stream = self.dev.fork_default_stream().unwrap();
+            let mut blas = CudaBlas::new(self.dev.clone()).unwrap();
+            unsafe {
+                blas.set_stream(Some(&stream));
+            }
+            blass.push(blas);
+            streams.push(stream);
+        }
+
+        for chunk_idx in 0..self.db_length / self.chunk_size {
+            for i in 0..4 {
+                for j in 0..4 {
+                    if i + j >= 4 {
+                        continue;
+                    }
+
+                    gemm(
+                        blass[chunk_idx].handle(),
+                        &self.db[i],
+                        &b_dev[j],
+                        &mut self.intermediate_results,
+                        (chunk_idx * self.entry_size * self.chunk_size) as u64,
+                        0,
+                        0,
+                        //(chunk_idx * self.query_length * self.chunk_size * 4) as u64,
+                        self.chunk_size,
+                        self.query_length,
+                        self.entry_size,
+                        (1 << 8 * (i + j)) as i32,
+                        if i + j == 0 { 0 } else { 1 },
+                    );
+                }
+            }
+
+            unsafe {
+                self.function.clone().launch_on_stream(
+                    &streams[chunk_idx],
+                    cfg,
+                    (
+                        &self.intermediate_results,
+                        &mut self.results,
+                        &self.db_sums,
+                        &self.query_sums,
+                        self.db_length as u64,
+                        self.query_length as u64,
+                        self.entry_size as u64,
+                        (chunk_idx * self.chunk_size * self.query_length) as u64,
+                        self.chunk_size as u64,
+                        chunk_idx as u64,
+                    ),
+                )
+            }
             .unwrap();
+
+            unsafe {
+                result::stream::synchronize(streams[chunk_idx].stream);
+            }
+
+            unsafe {
+                let _ = cuMemcpyDtoHAsync_v2(
+                    results_host
+                        .byte_offset((self.chunk_size * chunk_idx * self.query_length * 4) as isize)
+                        as *mut c_void,
+                    *self.results.device_ptr()
+                        + (self.chunk_size * chunk_idx * self.query_length * 4) as u64,
+                    self.chunk_size * self.query_length * 4,
+                    streams[chunk_idx].stream,
+                );
+            }
+        }
+
+        for stream in streams {
+            unsafe {
+                result::stream::synchronize(stream.stream);
+            }
+        }
+    }
+
+    /// p32 x p32 → p32
+    pub fn dot_p32(&mut self, preprocessed_query: &Vec<Vec<u8>>, results_host: *mut u32) {
+        let b_dev = preprocessed_query
+            .iter()
+            .map(|b| self.dev.htod_sync_copy(b).unwrap())
+            .collect::<Vec<_>>();
+
+        for i in 0..4 {
+            gemm(
+                &self.blas.handle(),
+                &b_dev[i],
+                &self.ones,
+                &mut self.query_sums,
+                0,
+                0,
+                (i * self.query_length * 4) as u64,
+                self.query_length,
+                1,
+                self.entry_size,
+                1,
+                0,
+            );
+        }
+
+        let num_elements = self.chunk_size * self.query_length;
+        let threads_per_block = 256;
+        let blocks_per_grid = (num_elements + threads_per_block - 1) / threads_per_block;
+        let cfg = LaunchConfig {
+            block_dim: (threads_per_block as u32, 1, 1),
+            grid_dim: (blocks_per_grid as u32, 1, 1),
+            shared_mem_bytes: 0,
+        };
+
+        let mut blass = vec![];
+        let mut streams = vec![];
+
+        for _ in 0..self.db_length / self.chunk_size {
+            let stream = self.dev.fork_default_stream().unwrap();
+            let mut blas = CudaBlas::new(self.dev.clone()).unwrap();
+            unsafe {
+                blas.set_stream(Some(&stream));
+            }
+            blass.push(blas);
+            streams.push(stream);
+        }
+
+        for chunk_idx in 0..self.db_length / self.chunk_size {
+            for i in 0..4 {
+                for j in 0..4 {
+                    gemm(
+                        blass[chunk_idx].handle(),
+                        &self.db[i],
+                        &b_dev[j],
+                        &mut self.intermediate_results,
+                        (chunk_idx * self.entry_size * self.chunk_size) as u64,
+                        0,
+                        ((i*4+j) * self.query_length * self.chunk_size * 4) as u64,
+                        self.chunk_size,
+                        self.query_length,
+                        self.entry_size,
+                        1,
+                        0,
+                    );
+                }
+            }
+
+            unsafe {
+                self.function.clone().launch_on_stream(
+                    &streams[chunk_idx],
+                    cfg,
+                    (
+                        &self.intermediate_results,
+                        &mut self.results,
+                        &self.db_sums,
+                        &self.query_sums,
+                        self.db_length as u64,
+                        self.query_length as u64,
+                        self.entry_size as u64,
+                        (chunk_idx * self.chunk_size * self.query_length) as u64,
+                        self.chunk_size as u64,
+                        chunk_idx as u64,
+                        1337,
+                    ),
+                )
+            }
+            .unwrap();
+
+            unsafe {
+                result::stream::synchronize(streams[chunk_idx].stream);
+            }
+
+            unsafe {
+                let _ = cuMemcpyDtoHAsync_v2(
+                    results_host
+                        .byte_offset((self.chunk_size * chunk_idx * self.query_length * 4) as isize)
+                        as *mut c_void,
+                    *self.results.device_ptr()
+                        + (self.chunk_size * chunk_idx * self.query_length * 4) as u64,
+                    self.chunk_size * self.query_length * 4,
+                    streams[chunk_idx].stream,
+                );
+            }
+        }
+
+        for stream in streams {
+            unsafe {
+                result::stream::synchronize(stream.stream);
+            }
+        }
     }
 }
 
 #[cfg(test)]
-/// Sanity checks for correctness
 mod tests {
+    use core::slice;
+    use std::ffi::c_void;
+
+    use cudarc::driver::sys::cuMemAllocHost_v2;
     use ndarray::Array2;
     use num_traits::FromPrimitive;
     use rand::{rngs::StdRng, Rng, SeedableRng};
@@ -741,6 +976,7 @@ mod tests {
     const WIDTH: usize = 12_800;
     const QUERY_SIZE: usize = 31;
     const DB_SIZE: usize = 1000;
+    const CHUNK_SIZE: usize = 100;
     const RNG_SEED: u64 = 1337;
 
     /// Helpers
@@ -789,8 +1025,7 @@ mod tests {
         }
 
         assert_eq!(
-            vec_column_major,
-            gpu_result,
+            vec_column_major, gpu_result,
             "GPU result does not match CPU implementation"
         );
     }
@@ -821,8 +1056,7 @@ mod tests {
         }
 
         assert_eq!(
-            vec_column_major,
-            gpu_result,
+            vec_column_major, gpu_result,
             "GPU result does not match CPU implementation"
         );
     }
@@ -835,7 +1069,7 @@ mod tests {
         let mut gpu_result = vec![0u32; DB_SIZE * QUERY_SIZE];
 
         let mut engine =
-            MatmulEngineU16::<u32>::create(&db, WIDTH, QUERY_SIZE, ComputeDataType::U32, None);
+            MatmulEngineU16::<u32>::create(&db, WIDTH, QUERY_SIZE, ComputeDataType::U16U32, None);
         let preprocessed_query = engine.preprocess_query(&query);
         engine.dot(&preprocessed_query, &mut gpu_result);
 
@@ -882,8 +1116,7 @@ mod tests {
         }
 
         assert_eq!(
-            vec_column_major,
-            gpu_result,
+            vec_column_major, gpu_result,
             "GPU result does not match CPU implementation"
         );
     }
@@ -912,8 +1145,7 @@ mod tests {
         }
 
         assert_eq!(
-            vec_column_major,
-            gpu_result,
+            vec_column_major, gpu_result,
             "GPU result does not match CPU implementation"
         );
     }
@@ -928,35 +1160,102 @@ mod tests {
         let query = (0..QUERY_SIZE * WIDTH)
             .map(|_| rng.gen::<u32>())
             .collect::<Vec<_>>();
-        let mut gpu_result = vec![0u32; DB_SIZE * QUERY_SIZE];
 
-        let mut engine = MatmulEngineU32::create(&db, WIDTH, QUERY_SIZE);
-        let preprocessed_query = engine.preprocess_query(&query);
-        engine.dot(&preprocessed_query, &mut gpu_result);
-
-        let a_nda = Array2::from_shape_vec(
+        let a_nda: ndarray::prelude::ArrayBase<
+            ndarray::OwnedRepr<u64>,
+            ndarray::prelude::Dim<[usize; 2]>,
+        > = Array2::from_shape_vec(
             (DB_SIZE as usize, WIDTH as usize),
-            db.into_iter().map(|x| x as u64).collect::<Vec<_>>(),
+            db.iter().map(|x| *x as u64).collect::<Vec<_>>(),
         )
         .unwrap();
 
         let b_nda = Array2::from_shape_vec(
             (QUERY_SIZE as usize, WIDTH as usize),
-            query.into_iter().map(|x| x as u64).collect::<Vec<_>>(),
+            query.iter().map(|x| *x as u64).collect::<Vec<_>>(),
         )
         .unwrap();
 
         let c_nda = a_nda.dot(&b_nda.t());
 
-        let mut vec_column_major: Vec<u32> = Vec::new();
-        for col in 0..c_nda.ncols() {
-            for row in c_nda.column(col) {
-                vec_column_major.push(*row as u32);
+        let mut engine =
+            MatmulEngineU32::create(&db, WIDTH, QUERY_SIZE, CHUNK_SIZE, ComputeDataType::U32);
+
+        let mut results_host_ptr: *mut c_void = std::ptr::null_mut();
+        unsafe {
+            let _ = cuMemAllocHost_v2(&mut results_host_ptr, DB_SIZE * QUERY_SIZE * 4);
+        }
+
+        let preprocessed_query = engine.preprocess_query(&query);
+        engine.dot(&preprocessed_query, results_host_ptr as *mut u32);
+
+        let gpu_result: &[u32] =
+            unsafe { slice::from_raw_parts(results_host_ptr as *mut u32, DB_SIZE * QUERY_SIZE) };
+
+        assert_eq!(
+            c_nda
+                .into_raw_vec()
+                .iter()
+                .map(|x| *x as u32)
+                .collect::<Vec<_>>(),
+            gpu_result,
+            "GPU result does not match CPU implementation"
+        );
+    }
+
+    #[test]
+    /// p32 x p32 → p32
+    fn check_p32() {
+        const p: u32 = 1337;
+        let mut rng = StdRng::seed_from_u64(RNG_SEED);
+        let db = (0..DB_SIZE * WIDTH).map(|_| rng.gen::<u32>() as u32).collect::<Vec<_>>();
+        let query = (0..QUERY_SIZE * WIDTH).map(|_| rng.gen::<u32>() as u32).collect::<Vec<_>>();
+
+        let mut engine =
+            MatmulEngineU32::create(&db, WIDTH, QUERY_SIZE, CHUNK_SIZE, ComputeDataType::P32);
+
+        let mut results_host_ptr: *mut c_void = std::ptr::null_mut();
+        unsafe {
+            let _ = cuMemAllocHost_v2(&mut results_host_ptr, DB_SIZE * QUERY_SIZE * 4);
+        }
+
+        let preprocessed_query = engine.preprocess_query(&query);
+        engine.dot_p32(&preprocessed_query, results_host_ptr as *mut u32);
+
+        let gpu_result: &[u32] =
+            unsafe { slice::from_raw_parts(results_host_ptr as *mut u32, DB_SIZE * QUERY_SIZE) };
+
+        let a_nda = Array2::from_shape_vec(
+            (DB_SIZE as usize, WIDTH as usize),
+            db.into_iter().map(|x| x as u32).collect::<Vec<_>>(),
+        )
+        .unwrap();
+
+        let b_nda = Array2::from_shape_vec(
+            (QUERY_SIZE as usize, WIDTH as usize),
+            query.into_iter().map(|x| x as u32).collect::<Vec<_>>(),
+        )
+        .unwrap();
+
+        let m = DB_SIZE;
+        let n = QUERY_SIZE;
+        let k = WIDTH;
+        let A = a_nda.into_raw_vec();
+        let B = b_nda.into_raw_vec();
+        let mut C = vec![0u32; n * m];
+
+        for row in 0..m {
+            for col in 0..n {
+                let mut sum: u64 = 0;
+                for i in 0..k {
+                    sum += ((A[i + row * k] as u64) * (B[i + col * k] as u64)) % p as u64;
+                }
+                C[col + row * n] = (sum % p as u64) as u32;
             }
         }
 
         assert_eq!(
-            vec_column_major,
+            C,
             gpu_result,
             "GPU result does not match CPU implementation"
         );
