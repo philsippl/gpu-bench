@@ -3,8 +3,7 @@ use std::{ffi::c_void, mem::size_of, ops::BitAnd, sync::Arc};
 use cudarc::{
     cublas::CudaBlas,
     driver::{
-        result, sys::cuMemcpyDtoHAsync_v2, CudaDevice, CudaFunction, CudaSlice, DevicePtr,
-        DeviceRepr, LaunchAsync, LaunchConfig,
+        result, sys::lib, CudaDevice, CudaFunction, CudaSlice, DevicePtr, DeviceRepr, LaunchAsync, LaunchConfig
     },
     nvrtc::compile_ptx,
 };
@@ -277,7 +276,7 @@ where
             }
 
             unsafe {
-                let _ = cuMemcpyDtoHAsync_v2(
+                let _ = lib().cuMemcpyDtoHAsync_v2(
                     results_host.byte_offset(
                         (self.chunk_size * chunk_idx * self.query_length * self.limbs) as isize,
                     ) as *mut c_void,
@@ -304,7 +303,6 @@ mod tests {
     use core::slice;
     use std::ffi::c_void;
 
-    use cudarc::driver::sys::cuMemAllocHost_v2;
     use ndarray::Array2;
     use rand::{rngs::StdRng, Rng, SeedableRng};
 
@@ -347,7 +345,7 @@ mod tests {
 
         let mut results_host_ptr: *mut c_void = std::ptr::null_mut();
         unsafe {
-            let _ = cuMemAllocHost_v2(&mut results_host_ptr, DB_SIZE * QUERY_SIZE * 4);
+            let _ = lib().cuMemAllocHost_v2(&mut results_host_ptr, DB_SIZE * QUERY_SIZE * 4);
         }
 
         let preprocessed_query = engine.preprocess_query(&query);
@@ -399,7 +397,7 @@ mod tests {
 
         let mut results_host_ptr: *mut c_void = std::ptr::null_mut();
         unsafe {
-            let _ = cuMemAllocHost_v2(&mut results_host_ptr, DB_SIZE * QUERY_SIZE * 2);
+            let _ = lib().cuMemAllocHost_v2(&mut results_host_ptr, DB_SIZE * QUERY_SIZE * 2);
         }
 
         let preprocessed_query = engine.preprocess_query(&query);
@@ -452,7 +450,7 @@ mod tests {
 
         let mut results_host_ptr: *mut c_void = std::ptr::null_mut();
         unsafe {
-            let _ = cuMemAllocHost_v2(&mut results_host_ptr, DB_SIZE * QUERY_SIZE * 2);
+            let _ = lib().cuMemAllocHost_v2(&mut results_host_ptr, DB_SIZE * QUERY_SIZE * 2);
         }
 
         let preprocessed_query = engine.preprocess_query(&query);
@@ -488,7 +486,7 @@ mod tests {
 
         let mut results_host_ptr: *mut c_void = std::ptr::null_mut();
         unsafe {
-            let _ = cuMemAllocHost_v2(&mut results_host_ptr, DB_SIZE * QUERY_SIZE * 4);
+            let _ = lib().cuMemAllocHost_v2(&mut results_host_ptr, DB_SIZE * QUERY_SIZE * 4);
         }
 
         let preprocessed_query = engine.preprocess_query(&query);
