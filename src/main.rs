@@ -74,13 +74,13 @@ fn main() {
 
     let peer: i32 = (device_id as i32 + 1) % 2;
 
-    if rank == 0 {
+    // if rank == 0 {
         println!("sending from {} to {}: {:?}", device_id, peer, slice);
         comm.send(&slice, peer).unwrap();
         println!("sent from {} to {}: {:?}", device_id, peer, slice);
-    } else {
+    // } else {
         comm.recv(&mut slice_receive, peer).unwrap();
         let out = dev.dtoh_sync_copy(&slice_receive).unwrap();
         println!("GPU {} received from peer {}: {:?}", device_id, peer, out);
-    }
+    // }
 }
