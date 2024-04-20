@@ -84,4 +84,6 @@ fn main() {
         let out = dev.dtoh_sync_copy(&slice_receive).unwrap();
         println!("GPU {} received from peer {}: {:?}", rank, peer, out);
     }
+
+    std::thread::sleep(std::time::Duration::from_secs(1));
 }
