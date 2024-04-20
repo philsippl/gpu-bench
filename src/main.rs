@@ -49,6 +49,8 @@ fn main() {
     let device_id = args[2].parse().unwrap();
     let n_devices = args[3].parse().unwrap();
 
+    println!("000000");
+
     let id = if rank == 0 {
         let id = Id::new().unwrap();
         println!("{:?}", IdWrapper(id.clone()).to_string());
@@ -59,9 +61,13 @@ fn main() {
         id
     };
 
+    println!("1111");
+
     // hex::encode(id.internal());
     let dev = CudaDevice::new(device_id).unwrap();
     let comm = Comm::from_rank(dev.clone(), rank, n_devices, id).unwrap();
+
+    println!("222");
 
     let slice = dev.htod_copy(vec![1337 as i32]).unwrap();
     let mut slice_receive = dev.alloc_zeros::<i32>(1).unwrap();
