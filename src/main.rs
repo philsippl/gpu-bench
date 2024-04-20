@@ -74,7 +74,7 @@ fn main() {
 
     let peer: i32 = (device_id as i32 + 1) % 2;
 
-    if device_id == 0 {
+    if rank == 0 {
         println!("sending from {} to {}: {:?}", device_id, peer, slice);
         comm.send(&slice, peer).unwrap();
         println!("sent from {} to {}: {:?}", device_id, peer, slice);
