@@ -1,39 +1,80 @@
-use std::{env, mem::MaybeUninit};
+use std::{env, str::FromStr};
 
 use cudarc::{
     driver::CudaDevice,
-    nccl::{group_end, group_start, result::{all_reduce, comm_init_rank, get_uniqueid}, Comm, Id, ReduceOp},
+    nccl::{
+        group_end, group_start,
+        result::{all_reduce, comm_init_rank, get_uniqueid},
+        Comm, Id, ReduceOp,
+    },
 };
 
+struct IdWrapper(Id);
+
+impl FromStr for IdWrapper {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let bytes = hex::decode(s)
+            .unwrap()
+            .iter()
+            .map(|&c| c as i8)
+            .collect::<Vec<_>>();
+
+        let mut id = [0i8; 128];
+        id.copy_from_slice(&bytes);
+
+        Ok(IdWrapper(Id::uninit(id)))
+    }
+}
+
+impl ToString for IdWrapper {
+    fn to_string(&self) -> String {
+        hex::encode(
+            self.0
+                .internal()
+                .iter()
+                .map(|&c| c as u8)
+                .collect::<Vec<_>>(),
+        )
+    }
+}
 
 fn main() {
-    let n_devices = CudaDevice::count().unwrap() as usize;
-    let mut threads = vec![];
-    let id = Id::new().unwrap();
+    // NCCL_COMM_ID
+    // let n_devices = CudaDevice::count().unwrap() as usize;
 
-    for i in 0..n_devices {
-        let thread = std::thread::spawn(move || {
-            let dev = CudaDevice::new(i).unwrap();
-            let comm = Comm::from_rank(dev.clone(), i, n_devices, id).unwrap();
-            let slice = dev.htod_copy(vec![i as i32]).unwrap();
-            let mut slice_receive = dev.alloc_zeros::<i32>(1).unwrap();
+    let args = env::args().collect::<Vec<_>>();
+    let rank = args[1].parse().unwrap();
+    let device_id = args[2].parse().unwrap();
+    let n_devices = args[3].parse().unwrap();
 
-            let peer: i32 = (i as i32 + 1) % 2;
+    let id = if rank == 0 {
+        let id = Id::new().unwrap();
+        println!("{:?}", IdWrapper(id.clone()).to_string());
+        id
+    } else {
+        let id = IdWrapper::from_str(&args[4]).unwrap().0;
+        println!("{:?}", IdWrapper(id.clone()).to_string());
+        id
+    };
 
-            println!("sending from {} to {}: {:?}", i, peer, slice);
-            comm.send(&slice, peer).unwrap();
-            println!("sent from {} to {}: {:?}", i, peer, slice);
-            comm.recv(&mut slice_receive, peer).unwrap();
+    // hex::encode(id.internal());
+    let dev = CudaDevice::new(device_id).unwrap();
+    let comm = Comm::from_rank(dev.clone(), rank, n_devices, id).unwrap();
 
-            let out = dev.dtoh_sync_copy(&slice_receive).unwrap();
-            println!("GPU {} received from peer {}: {:?}", i, peer, out);
-        });
+    let slice = dev.htod_copy(vec![1337 as i32]).unwrap();
+    let mut slice_receive = dev.alloc_zeros::<i32>(1).unwrap();
 
-        threads.push(thread);
+    let peer: i32 = (device_id as i32 + 1) % 2;
+
+    if device_id == 0 {
+        println!("sending from {} to {}: {:?}", device_id, peer, slice);
+        comm.send(&slice, peer).unwrap();
+        println!("sent from {} to {}: {:?}", device_id, peer, slice);
+    } else {
+        comm.recv(&mut slice_receive, peer).unwrap();
+        let out = dev.dtoh_sync_copy(&slice_receive).unwrap();
+        println!("GPU {} received from peer {}: {:?}", device_id, peer, out);
     }
-
-    for t in threads {
-        t.join().unwrap();
-    }
-
 }
