@@ -1,7 +1,7 @@
-use std::{env, str::FromStr};
+use std::{env, str::FromStr, time::Instant};
 
 use cudarc::{
-    driver::CudaDevice,
+    driver::{CudaDevice, CudaSlice},
     nccl::{
         group_end, group_start,
         result::{all_reduce, comm_init_rank, get_uniqueid},
@@ -40,6 +40,9 @@ impl ToString for IdWrapper {
     }
 }
 
+// 1 GB
+const LEN: usize = 1 << 30;
+
 fn main() {
     // NCCL_COMM_ID
     // let n_devices = CudaDevice::count().unwrap() as usize;
@@ -69,20 +72,23 @@ fn main() {
 
     println!("222");
 
-    let slice = dev.htod_copy(vec![1337 as i32]).unwrap();
-    let mut slice_receive = dev.alloc_zeros::<i32>(1).unwrap();
+    // let slice = dev.htod_copy(vec![1337 as i32]).unwrap();
+    let slice: CudaSlice<u8> = dev.alloc_zeros(LEN).unwrap();
+    let mut slice_receive = dev.alloc_zeros::<u8>(LEN).unwrap();
 
     let peer: i32 = (rank as i32 + 1) % 2;
 
     if rank == 0 {
         println!("sending from {} to {}: {:?}", rank, peer, slice);
         comm.send(&slice, peer).unwrap();
-        println!("sent from {} to {}: {:?}", device_id, peer, slice);
+        println!("sent from {} to {}: {:?}", rank, peer, slice);
     } else {
         println!("waiting for msg from peer {} ...", peer);
+        let now = Instant::now();
         comm.recv(&mut slice_receive, peer).unwrap();
-        let out = dev.dtoh_sync_copy(&slice_receive).unwrap();
-        println!("GPU {} received from peer {}: {:?}", rank, peer, out);
+        println!("received in {:?}", now.elapsed());
+        // let out = dev.dtoh_sync_copy(&slice_receive).unwrap();
+        // println!("GPU {} received from peer {}: {:?}", rank, peer, out);
     }
 
     std::thread::sleep(std::time::Duration::from_secs(1));
