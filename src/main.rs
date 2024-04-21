@@ -68,6 +68,9 @@ fn main() {
 
     // hex::encode(id.internal());
     let dev = CudaDevice::new(device_id).unwrap();
+
+    let mut slice: CudaSlice<u8> = dev.alloc_zeros(LEN).unwrap();
+
     let comm = Comm::from_rank(dev.clone(), rank, n_devices, id).unwrap();
 
     println!("222");
@@ -77,19 +80,17 @@ fn main() {
     let peer: i32 = (rank as i32 + 1) % 2;
     
     if rank == 0 {
-        let slice: CudaSlice<u8> = dev.alloc_zeros(LEN).unwrap();
         println!("sending from {} to {}: {:?}", rank, peer, slice);
         comm.send(&slice, peer).unwrap();
         println!("sent from {} to {}: {:?}", rank, peer, slice);
     } else {
-        let mut slice_receive = dev.alloc_zeros::<u8>(LEN).unwrap();
         println!("waiting for msg from peer {} ...", peer);
         let now = Instant::now();
-        comm.recv(&mut slice_receive, peer).unwrap();
+        comm.recv(&mut slice, peer).unwrap();
         dev.synchronize().unwrap();
         let elapsed = now.elapsed();
         println!(
-            "received in {:?} ({:.2} GB/s)",
+            "received in {:?} ({:.2} Gbps)",
             elapsed,
             (LEN as f64) / (elapsed.as_millis() as f64) / 1_000_000_000f64 * 1_000f64 * 8f64
         );
