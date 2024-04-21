@@ -86,6 +86,7 @@ fn main() {
         println!("waiting for msg from peer {} ...", peer);
         let now = Instant::now();
         comm.recv(&mut slice_receive, peer).unwrap();
+        dev.synchronize().unwrap();
         let elapsed = now.elapsed();
         println!("received in {:?} ({:.2} GB/s)", elapsed, LEN as u128/elapsed.as_millis()/1_000_000_000 * 1_000);
         // let out = dev.dtoh_sync_copy(&slice_receive).unwrap();
