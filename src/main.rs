@@ -93,5 +93,5 @@ fn main() {
         // println!("GPU {} received from peer {}: {:?}", rank, peer, out);
     }
 
-    std::thread::sleep(std::time::Duration::from_secs(1));
+    std::thread::sleep(std::time::Duration::from_secs(10));
 }
