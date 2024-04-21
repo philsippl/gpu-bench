@@ -41,7 +41,7 @@ impl ToString for IdWrapper {
 }
 
 // 1 GB
-const LEN: usize = 40 * (1 << 30);
+const LEN: usize = 30 * (1 << 30);
 
 fn main() {
     // NCCL_COMM_ID
