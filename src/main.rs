@@ -86,7 +86,8 @@ fn main() {
         println!("waiting for msg from peer {} ...", peer);
         let now = Instant::now();
         comm.recv(&mut slice_receive, peer).unwrap();
-        println!("received in {:?} ({:.2} GB/s)", now.elapsed(), LEN as u64/now.elapsed().as_secs()/1_000_000_000);
+        let elapsed = now.elapsed();
+        println!("received in {:?} ({:.2} GB/s)", elapsed, LEN as u64/elapsed.as_secs()/1_000_000_000);
         // let out = dev.dtoh_sync_copy(&slice_receive).unwrap();
         // println!("GPU {} received from peer {}: {:?}", rank, peer, out);
     }
