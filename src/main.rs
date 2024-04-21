@@ -73,16 +73,16 @@ fn main() {
     println!("222");
 
     // let slice = dev.htod_copy(vec![1337 as i32]).unwrap();
-    let slice: CudaSlice<u8> = dev.alloc_zeros(LEN).unwrap();
-    let mut slice_receive = dev.alloc_zeros::<u8>(LEN).unwrap();
-
+    
     let peer: i32 = (rank as i32 + 1) % 2;
-
+    
     if rank == 0 {
+        let slice: CudaSlice<u8> = dev.alloc_zeros(LEN).unwrap();
         println!("sending from {} to {}: {:?}", rank, peer, slice);
         comm.send(&slice, peer).unwrap();
         println!("sent from {} to {}: {:?}", rank, peer, slice);
     } else {
+        let mut slice_receive = dev.alloc_zeros::<u8>(LEN).unwrap();
         println!("waiting for msg from peer {} ...", peer);
         let now = Instant::now();
         comm.recv(&mut slice_receive, peer).unwrap();
