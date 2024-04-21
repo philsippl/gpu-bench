@@ -41,7 +41,7 @@ impl ToString for IdWrapper {
 }
 
 // 1 GB
-const LEN: usize = 1 << 30;
+const LEN: usize = 10 * (1 << 30);
 
 fn main() {
     // NCCL_COMM_ID
@@ -86,7 +86,7 @@ fn main() {
         println!("waiting for msg from peer {} ...", peer);
         let now = Instant::now();
         comm.recv(&mut slice_receive, peer).unwrap();
-        println!("received in {:?}", now.elapsed());
+        println!("received in {:?} ({:.2} GB/s)", now.elapsed(), LEN as u64/now.elapsed().as_secs()/1_000_000_000);
         // let out = dev.dtoh_sync_copy(&slice_receive).unwrap();
         // println!("GPU {} received from peer {}: {:?}", rank, peer, out);
     }
