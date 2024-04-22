@@ -88,6 +88,8 @@ async fn main() -> eyre::Result<()> {
             if party_id == 0 {
                 println!("sending from {} to {}....", party_id + i, peer_party);
                 comm.send(&slice, peer_party).unwrap();
+                dev.synchronize();
+                println!("sent from {} to {}!", party_id + i, peer_party);
             } else {
                 let now = Instant::now();
                 comm.recv(&mut slice, peer_party).unwrap();
