@@ -2,11 +2,10 @@
 // node 2: FI_EFA_USE_DEVICE_RDMA=1 NCCL_NET=socket NCCL_SOCKET_IFNAME=ens32 NCCL_DEBUG=INFO ./target/release/gpu-bench 1 0 2 ea4ce654861caacd0200c787ac1f29530000000000000000000000000000000000000000000000001019794c85550000b0e20ce2ff7f00000050b2c8b87f0000b0e00ce2ff7f000082f38fc8b87f00000100000000000000100000003000000080e20ce2ff7f0000b0e10ce2ff7f00000180adfb855500002919794c85550000
 
 use std::{
-    env,
-    str::FromStr,
-    time::{Duration, Instant},
+    env, str::FromStr, sync::Arc, time::{Duration, Instant}
 };
 
+use atomic_float::AtomicF64;
 use axum::{extract::Path, routing::get, Router};
 use cudarc::{
     driver::{CudaDevice, CudaSlice},
@@ -15,7 +14,8 @@ use cudarc::{
     },
 };
 use once_cell::sync::Lazy;
-use tokio::time::{self, sleep};
+use tokio::{sync::{Mutex, MutexGuard}, task::JoinHandle, time::{self, sleep}};
+use std::sync::atomic::Ordering::{Acquire, Release};
 
 static COMM_ID: Lazy<Vec<Id>> = Lazy::new(|| {
     (0..CudaDevice::count().unwrap())
@@ -66,9 +66,22 @@ async fn main() -> eyre::Result<()> {
     let args = env::args().collect::<Vec<_>>();
     let n_devices = CudaDevice::count().unwrap() as usize;
     let party_id: usize = args[1].parse().unwrap();
+    let total_throughput = Arc::new(AtomicF64::new(0.0));
 
-    for i in 0..n_devices {
+    if party_id == 0 {
         tokio::spawn(async move {
+            let app = Router::new().route("/:device_id", get(root));
+
+            let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
+            axum::serve(listener, app).await.unwrap();
+        });
+    };
+
+
+    let mut handles: Vec<JoinHandle<()>> = vec![];
+    for i in 0..n_devices {
+        let total_throughput_clone = Arc::clone(&total_throughput);
+        let handle = tokio::spawn(async move {
             let args = env::args().collect::<Vec<_>>();
             
             let id = if party_id == 0 {
@@ -104,20 +117,20 @@ async fn main() -> eyre::Result<()> {
                     throughput,
                     throughput * 8f64
                 );
+
+                total_throughput_clone.fetch_add(throughput * 8f64, std::sync::atomic::Ordering::SeqCst);
             }
         });
+        handles.push(handle);
     }
 
-    if party_id == 0 {
-        tokio::spawn(async move {
-            let app = Router::new().route("/:device_id", get(root));
+    for handle in handles {
+        handle.await?;
+    }
 
-            let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
-            axum::serve(listener, app).await.unwrap();
-        }).await?;
-    };
+    println!("Total throughput: {:?} Gbps", total_throughput);
 
-    time::sleep(Duration::from_secs(100)).await;
+    // time::sleep(Duration::from_secs(100)).await;
 
     Ok(())
 }
