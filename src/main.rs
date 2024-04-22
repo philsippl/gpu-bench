@@ -91,6 +91,7 @@ async fn main() -> eyre::Result<()> {
             } else {
                 let now = Instant::now();
                 comm.recv(&mut slice, peer_party).unwrap();
+                dev.synchronize();
                 let elapsed = now.elapsed();
                 let throughput =
                     (DUMMY_DATA_LEN as f64) / (elapsed.as_millis() as f64) / 1_000_000_000f64
