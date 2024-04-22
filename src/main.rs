@@ -63,7 +63,6 @@ async fn root(Path(device_id): Path<String>) -> String {
 
 #[tokio::main]
 async fn main() -> eyre::Result<()> {
-    tracing_subscriber::fmt::init();
     let args = env::args().collect::<Vec<_>>();
     let n_devices = CudaDevice::count().unwrap() as usize;
     let party_id: usize = args[1].parse().unwrap();
@@ -71,14 +70,15 @@ async fn main() -> eyre::Result<()> {
     for i in 0..n_devices {
         tokio::spawn(async move {
             let args = env::args().collect::<Vec<_>>();
-
+            
             let id = if party_id == 0 {
                 COMM_ID[i]
             } else {
                 let res = reqwest::get(format!("http://{}/{}", args[2], i)).await.unwrap();
                 IdWrapper::from_str(&res.text().await.unwrap()).unwrap().0
             };
-
+            
+            println!("starting device {i}...");
             let dev = CudaDevice::new(i).unwrap();
             let mut slice: CudaSlice<u8> = dev.alloc_zeros(DUMMY_DATA_LEN).unwrap();
             let comm = Comm::from_rank(dev.clone(), party_id, n_devices, id).unwrap();
