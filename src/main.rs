@@ -67,7 +67,7 @@ async fn main() -> eyre::Result<()> {
     let n_devices = CudaDevice::count().unwrap() as usize;
     let party_id: usize = args[1].parse().unwrap();
 
-    for i in 0..n_devices {
+    for i in 0..1 {
         tokio::spawn(async move {
             let args = env::args().collect::<Vec<_>>();
             
