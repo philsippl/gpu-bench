@@ -54,7 +54,7 @@ impl ToString for IdWrapper {
     }
 }
 
-const DUMMY_DATA_LEN: usize = 35 * (1 << 30);
+const DUMMY_DATA_LEN: usize = 1 * (1 << 30);
 
 async fn root(Path(device_id): Path<String>) -> String {
     let device_id: usize = device_id.parse().unwrap();
@@ -114,7 +114,7 @@ async fn main() -> eyre::Result<()> {
         }).await?;
     };
 
-    time::sleep(Duration::from_secs(10)).await;
+    time::sleep(Duration::from_secs(100)).await;
 
     Ok(())
 }
