@@ -15,7 +15,7 @@ use cudarc::{
     },
 };
 use once_cell::sync::Lazy;
-use tokio::time::sleep;
+use tokio::time::{self, sleep};
 
 static COMM_ID: Lazy<Vec<Id>> = Lazy::new(|| {
     (0..CudaDevice::count().unwrap())
@@ -113,6 +113,8 @@ async fn main() -> eyre::Result<()> {
             axum::serve(listener, app).await.unwrap();
         }).await?;
     };
+
+    time::sleep(Duration::from_secs(10)).await;
 
     Ok(())
 }
