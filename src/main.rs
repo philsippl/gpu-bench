@@ -82,26 +82,28 @@ fn main() {
     
     let peer: i32 = (rank as i32 + 1) % 2;
     
-    if rank == 0 {
-        println!("sending from {} to {}: {:?}", rank, peer, slice);
-        comm.send(&slice, peer).unwrap();
-        println!("sent from {} to {}: {:?}", rank, peer, slice);
-    } else {
-        println!("waiting for msg from peer {} ...", peer);
-        let now = Instant::now();
-        comm.recv(&mut slice, peer).unwrap();
-        dev.synchronize().unwrap();
-        let elapsed = now.elapsed();
-        let throughput =(LEN as f64) / (elapsed.as_millis() as f64) / 1_000_000_000f64 * 1_000f64;
-        println!(
-            "received in {:?} [{:.2} GB/s] [{:.2} Gbps]",
-            elapsed,
-            throughput,
-            throughput * 8f64
-        );
-        // let out = dev.dtoh_sync_copy(&slice_receive).unwrap();
-        // println!("GPU {} received from peer {}: {:?}", rank, peer, out);
+    for i in 0..10 {
+        if rank == 0 {
+            println!("sending from {} to {}: {:?}", rank, peer, slice);
+            comm.send(&slice, peer).unwrap();
+            println!("sent from {} to {}: {:?}", rank, peer, slice);
+        } else {
+            println!("waiting for msg from peer {} ...", peer);
+            let now = Instant::now();
+            comm.recv(&mut slice, peer).unwrap();
+            dev.synchronize().unwrap();
+            let elapsed = now.elapsed();
+            let throughput =(LEN as f64) / (elapsed.as_millis() as f64) / 1_000_000_000f64 * 1_000f64;
+            println!(
+                "received in {:?} [{:.2} GB/s] [{:.2} Gbps]",
+                elapsed,
+                throughput,
+                throughput * 8f64
+            );
+        }
     }
+
+    
 
     std::thread::sleep(std::time::Duration::from_secs(30));
 }
