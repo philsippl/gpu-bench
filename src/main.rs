@@ -68,15 +68,6 @@ async fn main() -> eyre::Result<()> {
     let n_devices = CudaDevice::count().unwrap() as usize;
     let party_id: usize = args[1].parse().unwrap();
 
-    if party_id == 0 {
-        tokio::spawn(async move {
-            let app = Router::new().route("/", get(root));
-
-            let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
-            axum::serve(listener, app).await.unwrap();
-        });
-    };
-
     for i in 0..n_devices {
         tokio::spawn(async move {
             let args = env::args().collect::<Vec<_>>();
@@ -90,17 +81,16 @@ async fn main() -> eyre::Result<()> {
 
             let dev = CudaDevice::new(i).unwrap();
             let mut slice: CudaSlice<u8> = dev.alloc_zeros(DUMMY_DATA_LEN).unwrap();
-            let comm = Comm::from_rank(dev.clone(), party_id + i, n_devices, id).unwrap();
+            let comm = Comm::from_rank(dev.clone(), party_id, n_devices, id).unwrap();
 
             let peer_party: i32 = (party_id as i32 + 1) % 2;
-            let peer_device = peer_party * n_devices as i32 + i as i32;
 
             if party_id == 0 {
-                println!("sending from {} to {}....", party_id + i, peer_device);
-                comm.send(&slice, peer_device).unwrap();
+                println!("sending from {} to {}....", party_id + i, peer_party);
+                comm.send(&slice, peer_party).unwrap();
             } else {
                 let now = Instant::now();
-                comm.recv(&mut slice, peer_device).unwrap();
+                comm.recv(&mut slice, peer_party).unwrap();
                 let elapsed = now.elapsed();
                 let throughput =
                     (DUMMY_DATA_LEN as f64) / (elapsed.as_millis() as f64) / 1_000_000_000f64
@@ -115,7 +105,15 @@ async fn main() -> eyre::Result<()> {
         });
     }
 
-    sleep(Duration::from_secs(10)).await;
+    if party_id == 0 {
+        tokio::spawn(async move {
+            let app = Router::new().route("/:device_id", get(root));
+
+            let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
+            axum::serve(listener, app).await.unwrap();
+        }).await?;
+    };
+
     Ok(())
 }
 
