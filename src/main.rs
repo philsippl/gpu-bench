@@ -11,7 +11,7 @@ use cudarc::{
     },
 };
 use once_cell::sync::Lazy;
-use tokio::{sync::Barrier, task::JoinHandle};
+use tokio::{sync::Barrier, task::{JoinHandle, LocalSet}};
 use std::sync::atomic::Ordering::{Acquire, SeqCst};
 
 static COMM_ID: Lazy<Vec<Id>> = Lazy::new(|| {
@@ -68,7 +68,6 @@ async fn main() -> eyre::Result<()> {
     if party_id == 0 {
         tokio::spawn(async move {
             let app = Router::new().route("/:device_id", get(root));
-
             let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
             axum::serve(listener, app).await.unwrap();
         });
@@ -76,10 +75,12 @@ async fn main() -> eyre::Result<()> {
 
     let barrier = Arc::new(Barrier::new(n_devices));
     let mut handles: Vec<JoinHandle<()>> = vec![];
+    let local = LocalSet::new();
+    
     for i in 0..n_devices {
         let total_throughput_clone = Arc::clone(&total_throughput);
         let c = barrier.clone();
-        let handle = tokio::task::spawn_local(async move {
+        let handle = local.spawn_local(async move {
             let args = env::args().collect::<Vec<_>>();
             
             let id = if party_id == 0 {
