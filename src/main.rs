@@ -14,9 +14,9 @@ use once_cell::sync::Lazy;
 use tokio::{sync::Barrier, task::JoinHandle};
 use std::sync::atomic::Ordering::{Acquire, SeqCst};
 
-static COMM_ID: Lazy<Vec<String>> = Lazy::new(|| {
+static COMM_ID: Lazy<Vec<Id>> = Lazy::new(|| {
     (0..CudaDevice::count().unwrap())
-        .map(|_| IdWrapper(Id::new().unwrap()).to_string())
+        .map(|_| Id::new().unwrap())
         .collect::<Vec<_>>()
 });
 
@@ -55,7 +55,7 @@ const DUMMY_DATA_LEN: usize = 35 * (1 << 30);
 
 async fn root(Path(device_id): Path<String>) -> String {
     let device_id: usize = device_id.parse().unwrap();
-    COMM_ID[device_id].to_string()
+    IdWrapper(COMM_ID[device_id]).to_string()
 }
 
 #[tokio::main]
@@ -84,7 +84,7 @@ async fn main() -> eyre::Result<()> {
             let args = env::args().collect::<Vec<_>>();
             
             let id = if party_id == 0 {
-                IdWrapper::from_str(&COMM_ID[i]).unwrap().0
+                COMM_ID[i]
             } else {
                 let res = reqwest::get(format!("http://{}/{}", args[2], i)).await.unwrap();
                 IdWrapper::from_str(&res.text().await.unwrap()).unwrap().0
@@ -93,7 +93,6 @@ async fn main() -> eyre::Result<()> {
             println!("starting device {i}...");
             let dev = CudaDevice::new(i).unwrap();
             let mut slice: CudaSlice<u8> = dev.alloc_zeros(DUMMY_DATA_LEN).unwrap();
-            dev.synchronize();
             c.wait().await;
             
             let comm = Comm::from_rank(dev.clone(), party_id, 2, id).unwrap();
