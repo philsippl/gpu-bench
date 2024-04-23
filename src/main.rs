@@ -1,5 +1,5 @@
 use std::{
-    env, str::FromStr, sync::Arc, time::Instant
+    env, str::FromStr, sync::Arc, time::{Duration, Instant}
 };
 
 use atomic_float::AtomicF64;
@@ -58,7 +58,7 @@ async fn root(Path(device_id): Path<String>) -> String {
     IdWrapper(COMM_ID[device_id]).to_string()
 }
 
-#[tokio::main(flavor = "multi_thread", worker_threads = 8)]
+#[tokio::main(flavor = "multi_thread", worker_threads = 12)]
 async fn main() -> eyre::Result<()> {
     let args = env::args().collect::<Vec<_>>();
     let n_devices = CudaDevice::count().unwrap() as usize;
@@ -67,6 +67,7 @@ async fn main() -> eyre::Result<()> {
 
     if party_id == 0 {
         tokio::spawn(async move {
+            println!("Starting http server");
             let app = Router::new().route("/:device_id", get(root));
             let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
             axum::serve(listener, app).await.unwrap();
@@ -75,13 +76,14 @@ async fn main() -> eyre::Result<()> {
 
     let barrier = Arc::new(Barrier::new(n_devices));
     let mut handles: Vec<JoinHandle<()>> = vec![];
-    let local = LocalSet::new();
-    
+
     for i in 0..n_devices {
         let total_throughput_clone = Arc::clone(&total_throughput);
         let c = barrier.clone();
-        let handle = local.spawn_local(async move {
+        let handle = tokio::spawn(async move {
             let args = env::args().collect::<Vec<_>>();
+
+            tokio::time::sleep(Duration::from_millis(1)).await;
             
             let id = if party_id == 0 {
                 COMM_ID[i]
@@ -96,7 +98,7 @@ async fn main() -> eyre::Result<()> {
             println!("starting device {i}...");
             
             let comm = Comm::from_rank(dev.clone(), party_id, 2, id).unwrap();
-            c.wait().await;
+            // c.wait().await;
             
             let peer_party: i32 = (party_id as i32 + 1) % 2;
 
