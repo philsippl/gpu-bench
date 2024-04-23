@@ -62,10 +62,10 @@ async fn main() -> eyre::Result<()> {
     let n_devices = CudaDevice::count().unwrap() as usize;
     let party_id: usize = args[1].parse().unwrap();
     let total_throughput = Arc::new(AtomicF64::new(0.0));
-    let local = LocalSet::new();
+    let local1 = LocalSet::new();
     
     if party_id == 0 {
-        local.spawn_local(async move {
+        local1.spawn_local(async move {
             println!("starting server...");
             let app = Router::new().route("/:device_id", get(root));
             let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
@@ -75,7 +75,7 @@ async fn main() -> eyre::Result<()> {
 
     let barrier = Arc::new(Barrier::new(n_devices));
     let mut handles: Vec<JoinHandle<()>> = vec![];
-    // let local = LocalSet::new();
+    let local = LocalSet::new();
 
     for i in 0..n_devices {
         let total_throughput_clone = Arc::clone(&total_throughput);
@@ -103,14 +103,13 @@ async fn main() -> eyre::Result<()> {
                 let peer_party: i32 = (party_id as i32 + 1) % 2;
     
                 if party_id == 0 {
-                    println!("sending from {} to {}....", party_id + i, peer_party);
+                    println!("sending from {} to {} (device {})....", party_id, peer_party, i);
                     comm.send(&slice, peer_party).unwrap();
-                    dev.synchronize();
-                    println!("sent from {} to {}!", party_id + i, peer_party);
+                    dev.synchronize().unwrap();
                 } else {
                     let now = Instant::now();
                     comm.recv(&mut slice, peer_party).unwrap();
-                    dev.synchronize();
+                    dev.synchronize().unwrap();
                     let elapsed = now.elapsed();
                     let throughput =
                         (DUMMY_DATA_LEN as f64) / (elapsed.as_millis() as f64) / 1_000_000_000f64
@@ -142,6 +141,8 @@ async fn main() -> eyre::Result<()> {
         "Total throughput: {:.2} Gbps",
         total_throughput.load(Acquire)
     );
+
+    local1.await;
 
     Ok(())
 }
