@@ -93,8 +93,8 @@ async fn main() -> eyre::Result<()> {
             println!("starting device {i}...");
             let dev = CudaDevice::new(i).unwrap();
             let mut slice: CudaSlice<u8> = dev.alloc_zeros(DUMMY_DATA_LEN).unwrap();
-            c.wait().await;
-            
+            // c.wait().await;
+
             let comm = Comm::from_rank(dev.clone(), party_id, 2, id).unwrap();
             
             let peer_party: i32 = (party_id as i32 + 1) % 2;
