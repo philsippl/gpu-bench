@@ -74,12 +74,23 @@ async fn main() -> eyre::Result<()> {
         });
     };
 
+    let mut devices: Vec<Arc<CudaDevice>> = vec![];
+    let mut slices: Vec<CudaSlice<u8>> = vec![];
+    for i in 0..n_devices {
+        let dev = CudaDevice::new(i).unwrap();
+        let mut slice: CudaSlice<u8> = dev.alloc_zeros(DUMMY_DATA_LEN).unwrap();
+        dev.synchronize();
+        slices.push(slice);
+        devices.push(dev);
+    }
     
     let barrier = Arc::new(Barrier::new(n_devices));
     let mut handles: Vec<JoinHandle<()>> = vec![];
     for i in 0..n_devices {
         let total_throughput_clone = Arc::clone(&total_throughput);
         let c = barrier.clone();
+        let devices = devices.clone();
+        let mut slices = slices.clone();
         let handle = tokio::spawn(async move {
             let args = env::args().collect::<Vec<_>>();
             
@@ -91,23 +102,21 @@ async fn main() -> eyre::Result<()> {
             };
             
             println!("starting device {i}...");
-            let dev = CudaDevice::new(i).unwrap();
-            let mut slice: CudaSlice<u8> = dev.alloc_zeros(DUMMY_DATA_LEN).unwrap();
-            // c.wait().await;
+            c.wait().await;
 
-            let comm = Comm::from_rank(dev.clone(), party_id, 2, id).unwrap();
+            let comm = Comm::from_rank(devices[i].clone(), party_id, 2, id).unwrap();
             
             let peer_party: i32 = (party_id as i32 + 1) % 2;
 
             if party_id == 0 {
                 println!("sending from {} to {}....", party_id + i, peer_party);
-                comm.send(&slice, peer_party).unwrap();
-                dev.synchronize();
+                comm.send(&slices[i], peer_party).unwrap();
+                devices[i].synchronize();
                 println!("sent from {} to {}!", party_id + i, peer_party);
             } else {
                 let now = Instant::now();
-                comm.recv(&mut slice, peer_party).unwrap();
-                dev.synchronize();
+                comm.recv(&mut slices[i], peer_party).unwrap();
+                devices[i].synchronize();
                 let elapsed = now.elapsed();
                 let throughput =
                     (DUMMY_DATA_LEN as f64) / (elapsed.as_millis() as f64) / 1_000_000_000f64
