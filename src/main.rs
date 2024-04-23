@@ -58,7 +58,7 @@ async fn root(Path(device_id): Path<String>) -> String {
     IdWrapper(COMM_ID[device_id]).to_string()
 }
 
-#[tokio::main]
+#[tokio::main(flavor = "multi_thread", worker_threads = 8)]
 async fn main() -> eyre::Result<()> {
     let args = env::args().collect::<Vec<_>>();
     let n_devices = CudaDevice::count().unwrap() as usize;
@@ -79,7 +79,7 @@ async fn main() -> eyre::Result<()> {
     for i in 0..n_devices {
         let total_throughput_clone = Arc::clone(&total_throughput);
         let c = barrier.clone();
-        let handle = tokio::spawn(async move {
+        let handle = tokio::task::spawn_local(async move {
             let args = env::args().collect::<Vec<_>>();
             
             let id = if party_id == 0 {
@@ -93,9 +93,9 @@ async fn main() -> eyre::Result<()> {
             let mut slice: CudaSlice<u8> = dev.alloc_zeros(DUMMY_DATA_LEN).unwrap();
 
             println!("starting device {i}...");
-            // c.wait().await;
-
+            
             let comm = Comm::from_rank(dev.clone(), party_id, 2, id).unwrap();
+            c.wait().await;
             
             let peer_party: i32 = (party_id as i32 + 1) % 2;
 
