@@ -90,7 +90,6 @@ async fn main() -> eyre::Result<()> {
         let total_throughput_clone = Arc::clone(&total_throughput);
         let c = barrier.clone();
         let devices = devices.clone();
-        let mut slices = slices.clone();
         let handle = tokio::spawn(async move {
             let args = env::args().collect::<Vec<_>>();
             
@@ -101,6 +100,8 @@ async fn main() -> eyre::Result<()> {
                 IdWrapper::from_str(&res.text().await.unwrap()).unwrap().0
             };
             
+            let mut slice: CudaSlice<u8> = devices[i].alloc_zeros(DUMMY_DATA_LEN).unwrap();
+
             println!("starting device {i}...");
             c.wait().await;
 
@@ -110,12 +111,12 @@ async fn main() -> eyre::Result<()> {
 
             if party_id == 0 {
                 println!("sending from {} to {}....", party_id + i, peer_party);
-                comm.send(&slices[i], peer_party).unwrap();
+                comm.send(&slice, peer_party).unwrap();
                 devices[i].synchronize();
                 println!("sent from {} to {}!", party_id + i, peer_party);
             } else {
                 let now = Instant::now();
-                comm.recv(&mut slices[i], peer_party).unwrap();
+                comm.recv(&mut slice, peer_party).unwrap();
                 devices[i].synchronize();
                 let elapsed = now.elapsed();
                 let throughput =
